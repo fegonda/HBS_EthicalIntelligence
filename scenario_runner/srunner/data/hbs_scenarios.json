@@ -1,0 +1,38 @@
+{
+    "available_scenarios": [
+        {
+            "Town01": [
+                {
+                    "available_event_configurations": [
+                        {
+                            "transform": {
+                                "pitch": "0",
+                                "x": "-1.61",
+                                "y": "13.63",
+                                "yaw": "89",
+                                "z": "1.0"
+                            }
+                        }
+                    ],
+                    "scenario_type": "Scenario11"
+		        },
+                {
+                    "available_event_configurations": [
+                        {
+                            "transform": {
+                                "pitch": "0",
+                                "x": "-1.61",
+                                "y": "191.92",
+                                "yaw": "89",
+                                "z": "1.0"
+                            }
+                        }
+                    ],
+                    "scenario_type": "Scenario12"
+
+                }
+	        ]
+        }
+    ]
+}
+
