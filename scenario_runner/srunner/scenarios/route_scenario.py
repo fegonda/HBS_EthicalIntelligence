@@ -34,9 +34,9 @@ from srunner.tools.py_trees_port import oneshot_behavior
 
 from srunner.scenarios.control_loss import ControlLoss
 from srunner.scenarios.follow_leading_vehicle import FollowLeadingVehicle
-from srunner.scenarios.follow_leading_vehicle import FollowLeadingVehicleWithObstacle, FollowLeadingVehicleWithObstacle
+from srunner.scenarios.follow_leading_vehicle import FollowLeadingVehicleWithObstacle
 from srunner.scenarios.object_crash_vehicle import DynamicObjectCrossing
-from srunner.scenarios.hbs_scenarios import CyclistCrossing, PedestrianCrossing
+from srunner.scenarios.hbs_scenarios import CyclistCrossing, PedestrianCrossing, CustomObjectCrossing, FollowLeadingVehicleWithObstruction
 from srunner.scenarios.object_crash_intersection import VehicleTurningRoute
 from srunner.scenarios.other_leading_vehicle import OtherLeadingVehicle
 from srunner.scenarios.maneuver_opposite_direction import ManeuverOppositeDirection
@@ -67,8 +67,12 @@ NUMBER_CLASS_TRANSLATION = {
     "Scenario9": SignalJunctionCrossingRoute,
     "Scenario10": NoSignalJunctionCrossingRoute,
     "Scenario11": CyclistCrossing,
-    "Scenario12": PedestrianCrossing
+    "Scenario12": PedestrianCrossing,
+    "Scenario13": CustomObjectCrossing,
+    "Scenario14": FollowLeadingVehicleWithObstruction
 }
+
+
 
 
 def convert_json_to_transform(actor_dict):
@@ -433,7 +437,8 @@ class RouteScenario(BasicScenario):
 
         # Create the background activity of the route
         town_amount = {
-            'Town01': 120,
+            #FG 'Town01': 120,
+            'Town01': 0,
             'Town02': 100,
             'Town03': 120,
             'Town04': 200,

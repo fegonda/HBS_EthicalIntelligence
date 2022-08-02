@@ -20,17 +20,102 @@ from srunner.scenariomanager.scenarioatomics.atomic_behaviors import (ActorTrans
                                                                       AccelerateToVelocity,
                                                                       HandBrakeVehicle,
                                                                       KeepVelocity,
-                                                                      StopVehicle)
+                                                                      StopVehicle,
+                                                                      WaypointFollower)
 from srunner.scenariomanager.scenarioatomics.atomic_criteria import CollisionTest
 from srunner.scenariomanager.scenarioatomics.atomic_trigger_conditions import (InTriggerDistanceToLocationAlongRoute,
                                                                                InTimeToArrivalToVehicle,
                                                                                InTimeToArrivalToLocation,
                                                                                InTriggerDistanceToLocation,
-                                                                               DriveDistance)
+                                                                               InTriggerDistanceToVehicle,
+                                                                               InTriggerDistanceToNextIntersection,
+                                                                               DriveDistance,
+                                                                               StandStill)
+
+
+
+
 from srunner.scenariomanager.timer import TimeOut
 from srunner.scenarios.basic_scenario import BasicScenario
 from srunner.tools.scenario_helper import get_location_in_distance_from_wp
+from srunner.tools.scenario_helper import get_waypoint_in_distance
 
+class CustomObjectCrossing(BasicScenario):
+    def __init__(self, world, ego_vehicles, config, randomize=False, debug_mode=False, criteria_enable=True, timeout=60):
+        """
+        Setup all relevant parameters and create scenario
+        """
+        self._wmap = CarlaDataProvider.get_map()
+        self._trigger_location = config.trigger_points[0].location
+        self._reference_waypoint = self._wmap.get_waypoint(self._trigger_location)
+        self._num_lane_changes = 0
+
+        self._start_distance = 12
+        self._blocker_shift = 0.9
+        self._retry_dist = 0.4
+
+        self._adversary_type = 'vehicle.diamondback.century'  # blueprint filter of the adversary
+        self._blocker_type = None  # blueprint filter of the blocker
+        self._adversary_transform = None
+        self._blocker_transform = None
+        self._collision_wp = None
+
+        self._adversary_speed = 4.0  # Speed of the adversary [m/s]
+        self._reaction_time = 0.8  # Time the agent has to react to avoid the collision [s]
+        self._reaction_ratio = 0.12  # The higehr the number of lane changes, the smaller the reaction time
+        self._min_trigger_dist = 6.0  # Min distance to the collision location that triggers the adversary [m]
+        self._ego_end_distance = 40
+        self.timeout = timeout
+
+        self._number_of_attempts = 6
+
+        super(CustomObjectCrossing, self).__init__("CustomObjectCrossing",
+                                                    ego_vehicles,
+                                                    config,
+                                                    world,
+                                                    debug_mode,
+                                                    criteria_enable=criteria_enable)
+
+
+    def _initialize_actors(self, config):
+        """
+        Custom initialization
+        """
+        print('<--->CustomObjectCrossing._initialize_actors')
+        print(config)
+
+
+    def _create_behavior(self):
+        """
+        After invoking this scenario, cyclist will wait for the user
+        controlled vehicle to enter trigger distance region,
+        the cyclist starts crossing the road once the condition meets,
+        then after 60 seconds, a timeout stops the scenario
+        """
+        print('<--->CustomObjectCrossing._create_behavior')
+
+        sequence = py_trees.composites.Sequence()
+
+        return sequence
+
+
+    def _create_test_criteria(self):
+        """
+        A list of all test criteria will be created that is later used
+        in parallel behavior tree.
+        """
+        criteria = []
+
+        collision_criterion = CollisionTest(self.ego_vehicles[0])
+        criteria.append(collision_criterion)
+
+        return criteria
+
+    def __del__(self):
+        """
+        Remove all actors upon deletion
+        """
+        self.remove_all_actors()
 
 
 class CyclistCrossing(BasicScenario):
@@ -453,6 +538,173 @@ class PedestrianCrossing(BasicScenario):
         criteria = []
 
         collision_criterion = CollisionTest(self.ego_vehicles[0])
+        criteria.append(collision_criterion)
+
+        return criteria
+
+    def __del__(self):
+        """
+        Remove all actors upon deletion
+        """
+        self.remove_all_actors()
+
+
+
+
+"""
+   Setup Requirements:
+   - Atleast 94 cm between the start and end of the route
+   - Atleast 66 cm clearance infront of the scenario trigger - no junctions etc
+   - Leading vehicle starts 25 cm infront of scenario trigger
+   - Cyclist starts 41 cm infront of the leading vehicle
+   - Rould shoulders should be clear for cyclist to drive off the road
+   
+"""
+class FollowLeadingVehicleWithObstruction(BasicScenario):
+
+    """
+    This class holds a scenario similar to FollowLeadingVehicle
+    but there is an obstacle in front of the leading vehicle
+
+    This is a single ego vehicle scenario
+    """
+
+    timeout = 120            # Timeout of scenario in seconds
+
+    def __init__(self, world, ego_vehicles, config, randomize=False, debug_mode=False, criteria_enable=True, timeout=360):
+        """
+        Setup all relevant parameters and create scenario
+        """
+        self._map = CarlaDataProvider.get_map()
+        self._first_actor_location = 25
+        self._second_actor_location = self._first_actor_location + 41
+        self._first_actor_speed = 10
+        self._second_actor_speed = 1.5
+        self._reference_waypoint = self._map.get_waypoint(config.trigger_points[0].location)
+        self._other_actor_max_brake = 1.0
+        self._first_actor_transform = None
+        self._second_actor_transform = None
+
+        super(FollowLeadingVehicleWithObstruction, self).__init__("FollowLeadingVehicleWithObstruction",
+                                                               ego_vehicles,
+                                                               config,
+                                                               world,
+                                                               debug_mode,
+                                                               criteria_enable=criteria_enable)
+        if randomize:
+            self._ego_other_distance_start = random.randint(4, 8)
+
+    def _initialize_actors(self, config):
+        """
+        Custom initialization
+        """
+
+        location, _ = get_location_in_distance_from_wp(self._reference_waypoint, self._first_actor_location, False)
+        f1_waypoint = self._map.get_waypoint(location)
+
+        
+        location, _ = get_location_in_distance_from_wp(self._reference_waypoint, self._second_actor_location, False)
+        f2_waypoint = self._map.get_waypoint(location)
+
+        # import pdb; pdb.set_trace()
+
+        first_actor_waypoint, _t1 = get_waypoint_in_distance(self._reference_waypoint, self._first_actor_location)
+        second_actor_waypoint, _t2 = get_waypoint_in_distance(self._reference_waypoint, self._second_actor_location)
+
+        # import pdb; pdb.set_trace()
+        first_actor_transform = carla.Transform(
+            carla.Location(first_actor_waypoint.transform.location.x,
+                           first_actor_waypoint.transform.location.y,
+                           first_actor_waypoint.transform.location.z),
+            first_actor_waypoint.transform.rotation)
+
+        yaw_1 = second_actor_waypoint.transform.rotation.yaw + 90
+        second_actor_transform = carla.Transform(
+            carla.Location(second_actor_waypoint.transform.location.x,
+                           second_actor_waypoint.transform.location.y,
+                           second_actor_waypoint.transform.location.z),
+            carla.Rotation(second_actor_waypoint.transform.rotation.pitch, yaw_1,
+                           second_actor_waypoint.transform.rotation.roll))
+
+        first_actor = CarlaDataProvider.request_new_actor(
+            'vehicle.nissan.patrol', first_actor_transform)
+
+        second_actor = CarlaDataProvider.request_new_actor(
+            'vehicle.diamondback.century', second_actor_transform)
+
+        first_actor.set_simulate_physics(enabled=True)
+        second_actor.set_simulate_physics(enabled=True)
+        self.other_actors.append(first_actor)
+        self.other_actors.append(second_actor)
+
+        fd1 = self._reference_waypoint.transform.location.distance(first_actor_waypoint.transform.location)
+        fd2 = first_actor_waypoint.transform.location.distance(second_actor_waypoint.transform.location)
+
+    def _create_behavior(self):
+        """
+        The scenario defined after is a "follow leading vehicle" scenario. After
+        invoking this scenario, it will wait for the user controlled vehicle to
+        enter the start region, then make the other actor to drive towards obstacle.
+        Once obstacle clears the road, make the other actor to drive towards the
+        next intersection. Finally, the user-controlled vehicle has to be close
+        enough to the other actor to end the scenario.
+        If this does not happen within 60 seconds, a timeout stops the scenario
+        """
+
+        # let the other actor drive until next intersection
+        driving_to_next_intersection = py_trees.composites.Parallel(
+            "Driving towards Intersection",
+            policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+
+        obstacle_clear_road = py_trees.composites.Parallel("Obstalce clearing road",
+                                                           policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        obstacle_clear_road.add_child(DriveDistance(self.other_actors[1], 4))
+        obstacle_clear_road.add_child(KeepVelocity(self.other_actors[1], self._second_actor_speed))
+
+        stop_near_intersection = py_trees.composites.Parallel(
+            "Waiting for end position near Intersection",
+            policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        stop_near_intersection.add_child(WaypointFollower(self.other_actors[0], 10))
+        stop_near_intersection.add_child(InTriggerDistanceToNextIntersection(self.other_actors[0], 20))
+
+        driving_to_next_intersection.add_child(WaypointFollower(self.other_actors[0], self._first_actor_speed))
+        driving_to_next_intersection.add_child(InTriggerDistanceToVehicle(self.other_actors[1],
+                                                                          self.other_actors[0], 15))
+
+        # end condition
+        endcondition = py_trees.composites.Parallel("Waiting for end position",
+                                                    policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        endcondition_part1 = InTriggerDistanceToVehicle(self.other_actors[0],
+                                                        self.ego_vehicles[0],
+                                                        distance=20,
+                                                        name="FinalDistance")
+        endcondition_part2 = StandStill(self.ego_vehicles[0], name="FinalSpeed", duration=1)
+        endcondition.add_child(endcondition_part1)
+        endcondition.add_child(endcondition_part2)
+
+        # Build behavior tree
+        sequence = py_trees.composites.Sequence("Sequence Behavior")
+        sequence.add_child(driving_to_next_intersection)
+        sequence.add_child(StopVehicle(self.other_actors[0], self._other_actor_max_brake))
+        sequence.add_child(TimeOut(3))
+        sequence.add_child(obstacle_clear_road)
+        sequence.add_child(stop_near_intersection)
+        sequence.add_child(StopVehicle(self.other_actors[0], self._other_actor_max_brake))
+        sequence.add_child(endcondition)
+        sequence.add_child(ActorDestroy(self.other_actors[0]))
+        sequence.add_child(ActorDestroy(self.other_actors[1]))
+
+        return sequence
+
+    def _create_test_criteria(self):
+        """
+        A list of all test criteria will be created that is later used
+        in parallel behavior tree.
+        """
+        criteria = []
+
+        collision_criterion = CollisionTest(self.ego_vehicles[0])
+
         criteria.append(collision_criterion)
 
         return criteria
