@@ -8,7 +8,7 @@
                             "transform": {
                                 "pitch": "0",
                                 "x": "-1.61",
-                                "y": "13.63",
+                                "y": "25.73",
                                 "yaw": "89",
                                 "z": "1.0"
                             }
@@ -28,7 +28,37 @@
                             }
                         }
                     ],
-                    "scenario_type": "Scenario12"
+                    "scenario_type": "Scenario14"
+
+                },
+                {
+                    "available_event_configurations": [
+                        {
+                            "transform": {
+                                "pitch": "0",
+                                "x": "212.90",
+                                "y": "59.90",
+                                "yaw": "0",
+                                "z": "1.0"
+                            }
+                        }
+                    ],
+                    "scenario_type": "Scenario14"
+
+                },
+                {
+                    "available_event_configurations": [
+                        {
+                            "transform": {
+                                "pitch": "0",
+                                "x": "156.90",
+                                "y": "133.50",
+                                "yaw": "0",
+                                "z": "1.0"
+                            }
+                        }                   
+                    ],
+                    "scenario_type": "Scenario15"
 
                 }
 	        ]

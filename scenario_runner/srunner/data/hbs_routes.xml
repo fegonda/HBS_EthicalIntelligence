@@ -14,7 +14,7 @@
         />
         <waypoint pitch="0.0" roll="0.0" x="53.05508041381836" y="-2.35788631439209" yaw="-179.970947265625" z="0.0" />
         <waypoint pitch="0.0" roll="0.0" x="-2.673415422439575" y="28.63454818725586" yaw="89.88465118408203" z="0.0" />
-        <waypoint pitch="0.0" roll="0.0" x="-2.3427786827087402" y="52.8701171875" yaw="89.88465118408203" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="-2.3427786827087402" y="127.07" yaw="89.88465118408203" z="0.0" />
     </route>
     <route id="2" town="Town01">
         <weather 
@@ -30,6 +30,38 @@
         />
         <waypoint pitch="0.0" roll="0.0" x="-0.85" y="145.92" yaw="-179.970947265625" z="0.0" />
         <waypoint pitch="0.0" roll="0.0" x="-0.75" y="171.12" yaw="89.88465118408203" z="0.0" />
-        <waypoint pitch="0.0" roll="0.0" x="-0.75" y="232.42" yaw="89.88465118408203" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="-0.75" y="306.72" yaw="89.88465118408203" z="0.0" />
     </route>
+    <route id="3" town="Town01">
+        <weather 
+            cloudiness="30"
+            precipitation="80"
+            precipitation_deposits="70"
+            wind_intensity="100"
+            sun_azimuth_angle="-1"
+            sun_altitude_angle="15"
+            fog_density="7"
+            fog_distance="0.75"
+            wetness="0"
+        />
+        <waypoint pitch="0.0" roll="0.0" x="152.00" y="133.50" yaw="0.0" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="199.25" y="133.50" yaw="0.0" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="301.50" y="133.50" yaw="0.0" z="0.0" />
+    </route>
+    <route id="4" town="Town01">
+        <weather 
+            cloudiness="10"
+            precipitation="0"
+            precipitation_deposits="0"
+            wind_intensity="50"
+            sun_azimuth_angle="0"
+            sun_altitude_angle="35"
+            fog_density="0"
+            fog_distance="0"
+            wetness="0"
+        />
+        <waypoint pitch="0.0" roll="0.0" x="173.50" y="59.90" yaw="0.0" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="199.90" y="59.90" yaw="0.0" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="315.50" y="59.90" yaw="0.0" z="0.0" />
+    </route>    
 </routes>
