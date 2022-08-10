@@ -36,7 +36,7 @@ from srunner.scenarios.control_loss import ControlLoss
 from srunner.scenarios.follow_leading_vehicle import FollowLeadingVehicle
 from srunner.scenarios.follow_leading_vehicle import FollowLeadingVehicleWithObstacle
 from srunner.scenarios.object_crash_vehicle import DynamicObjectCrossing
-from srunner.scenarios.hbs_scenarios import CyclistCrossing, PedestrianCrossing, CrowdCrossing, CustomObjectCrossing, FollowLeadingVehicleWithObstruction
+from srunner.scenarios.hbs_scenarios import CyclistCrossing, CyclistsCrossing, PedestrianCrossing, CrowdCrossing, CustomObjectCrossing, FollowLeadingVehicleWithObstruction
 from srunner.scenarios.object_crash_intersection import VehicleTurningRoute
 from srunner.scenarios.other_leading_vehicle import OtherLeadingVehicle
 from srunner.scenarios.maneuver_opposite_direction import ManeuverOppositeDirection
@@ -355,6 +355,10 @@ class RouteScenario(BasicScenario):
                 scenario_info += str(scenario['trigger_position']['z']) + ']'
                 world.debug.draw_string(loc,scenario_info, draw_shadow=False,
                                         color=carla.Color(0, 0, 255), life_time=100000, persistent_lines=True)
+
+                # extent = carla.Location(111.5, 111.5, 111.5)
+                # world.debug.draw_box(box=carla.BoundingBox(loc, extent * 1e-2), rotation=carla.Rotation(yaw=0), life_time=1000, thickness=0.15, color=carla.Color(r=0,g=255,b=0))
+
 
                 #</FG-changes>
 
