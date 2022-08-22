@@ -36,7 +36,6 @@ from srunner.scenarios.control_loss import ControlLoss
 from srunner.scenarios.follow_leading_vehicle import FollowLeadingVehicle
 from srunner.scenarios.follow_leading_vehicle import FollowLeadingVehicleWithObstacle
 from srunner.scenarios.object_crash_vehicle import DynamicObjectCrossing
-from srunner.scenarios.hbs_scenarios import CyclistCrossing, CyclistsCrossing, PedestrianCrossing, CrowdCrossing, CustomObjectCrossing, FollowLeadingVehicleWithObstruction
 from srunner.scenarios.object_crash_intersection import VehicleTurningRoute
 from srunner.scenarios.other_leading_vehicle import OtherLeadingVehicle
 from srunner.scenarios.maneuver_opposite_direction import ManeuverOppositeDirection
@@ -65,12 +64,7 @@ NUMBER_CLASS_TRANSLATION = {
     "Scenario7": SignalJunctionCrossingRoute,
     "Scenario8": SignalJunctionCrossingRoute,
     "Scenario9": SignalJunctionCrossingRoute,
-    "Scenario10": NoSignalJunctionCrossingRoute,
-    "Scenario11": CyclistCrossing,
-    "Scenario12": PedestrianCrossing,
-    "Scenario13": CustomObjectCrossing,
-    "Scenario14": CrowdCrossing,
-    "Scenario15": FollowLeadingVehicleWithObstruction
+    "Scenario10": NoSignalJunctionCrossingRoute
 }
 
 
@@ -154,7 +148,7 @@ class RouteScenario(BasicScenario):
     along which several smaller scenarios are triggered
     """
 
-    def __init__(self, world, config, debug_mode=False, criteria_enable=True, timeout=300, background_activty=False):
+    def __init__(self, world, config, debug_mode=False, criteria_enable=True, timeout=300):
         """
         Setup all relevant parameters and create scenarios along route
         """
@@ -162,7 +156,6 @@ class RouteScenario(BasicScenario):
         self.config = config
         self.route = None
         self.sampled_scenarios_definitions = None
-        self.background_activty = background_activty
 
         self._update_route(world, config, debug_mode)
 
@@ -191,10 +184,6 @@ class RouteScenario(BasicScenario):
         - world: CARLA world
         - config: Scenario configuration (RouteConfiguration)
         """
-
-        print('=<scenario_file>==', config.scenario_file)
-        print('=<scenario_file>==', config.trajectory)
-
         # Transform the scenario file into a dictionary
         world_annotations = RouteParser.parse_annotations_file(config.scenario_file)
 
@@ -343,24 +332,6 @@ class RouteScenario(BasicScenario):
                                      scenario['trigger_position']['y'],
                                      scenario['trigger_position']['z']) + carla.Location(z=2.0)
                 world.debug.draw_point(loc, size=0.3, color=carla.Color(255, 0, 0), life_time=100000)
-                #<FG-changes>
-                # world.debug.draw_string(loc, str(scenario['name']), draw_shadow=False,
-                                        # color=carla.Color(0, 0, 255), life_time=100000, persistent_lines=True)
-
-                scenario_info = str(scenario['name'])
-                scenario_info += '\n\r' + str(NUMBER_CLASS_TRANSLATION[scenario['name']].__name__)
-                scenario_info += '\n\r['
-                scenario_info += str(scenario['trigger_position']['x']) +','
-                scenario_info += str(scenario['trigger_position']['y']) +','
-                scenario_info += str(scenario['trigger_position']['z']) + ']'
-                world.debug.draw_string(loc,scenario_info, draw_shadow=False,
-                                        color=carla.Color(0, 0, 255), life_time=100000, persistent_lines=True)
-
-                # extent = carla.Location(111.5, 111.5, 111.5)
-                # world.debug.draw_box(box=carla.BoundingBox(loc, extent * 1e-2), rotation=carla.Rotation(yaw=0), life_time=1000, thickness=0.15, color=carla.Color(r=0,g=255,b=0))
-
-
-                #</FG-changes>
 
 
         for scenario_number, definition in enumerate(scenario_definitions):
@@ -455,7 +426,7 @@ class RouteScenario(BasicScenario):
             'Town10': 120,
         }
 
-        amount = town_amount[config.town] if self.background_activty and config.town in town_amount else 0
+        amount = town_amount[config.town]
 
         new_actors = CarlaDataProvider.request_new_batch_actors('vehicle.*',
                                                                 amount,

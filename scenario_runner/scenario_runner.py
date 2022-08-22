@@ -203,9 +203,6 @@ class ScenarioRunner(object):
         """
         Spawn or update the ego vehicles
         """
-        print('prepping ego vehicles')
-        print(ego_vehicles)
-
         if not self._args.waitForEgo:
             for vehicle in ego_vehicles:
                 self.ego_vehicles.append(CarlaDataProvider.request_new_actor(vehicle.model,
@@ -216,7 +213,6 @@ class ScenarioRunner(object):
         else:
             ego_vehicle_missing = True
             while ego_vehicle_missing:
-                print('--> waiting for ego')
                 self.ego_vehicles = []
                 ego_vehicle_missing = False
                 for ego_vehicle in ego_vehicles:
@@ -226,7 +222,6 @@ class ScenarioRunner(object):
 
                     for carla_vehicle in carla_vehicles:
                         if carla_vehicle.attributes['role_name'] == ego_vehicle.rolename:
-                            print('-->found ego vehicle')
                             ego_vehicle_found = True
                             self.ego_vehicles.append(carla_vehicle)
                             break
@@ -237,9 +232,6 @@ class ScenarioRunner(object):
             for i, _ in enumerate(self.ego_vehicles):
                 self.ego_vehicles[i].set_transform(ego_vehicles[i].transform)
                 CarlaDataProvider.register_actor(self.ego_vehicles[i])
-
-        print('done prepping ego vehicles')
-        print(ego_vehicles)
 
         # sync state
         if CarlaDataProvider.is_sync_mode():
@@ -312,9 +304,6 @@ class ScenarioRunner(object):
         Load a new CARLA world and provide data to CarlaDataProvider
         """
 
-        print('--> reloadWorld:', self._args.reloadWorld)
-        print('--> ego_vehicles:', self.ego_vehicles)
-
         if self._args.reloadWorld:
             self.world = self.client.load_world(town)
         else:
@@ -386,8 +375,6 @@ class ScenarioRunner(object):
             tm.set_synchronous_mode(True)
 
         # Prepare scenario
-        print("Preparing scenario: " + config.name)
-        print("-->Preparing ego_vehicles: ", config.ego_vehicles)
         try:
             self._prepare_ego_vehicles(config.ego_vehicles)
             if self._args.openscenario:
@@ -483,11 +470,7 @@ class ScenarioRunner(object):
         # retrieve routes
         route_configurations = RouteParser.parse_routes_file(routes, scenario_file, single_route)
 
-        print("===========================")
-        print(route_configurations)
-        print("===========================")
         for config in route_configurations:
-            print('<---> ego_vehicles: ', config.ego_vehicles)
             for _ in range(self._args.repetitions):
                 result = self._load_and_run_scenario(config)
 

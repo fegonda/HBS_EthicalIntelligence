@@ -24,20 +24,20 @@ except IndexError:
     pass
 
 import carla
-from scenario_runner import ScenarioRunner
+from hbs_scenario_runner import HBSScenarioRunner
 
 recorder_file = None
 
 
 def start_scenario_runner(scenario_runner_instance):
     try:
-        print("Starting scenario runner")
+        print("Starting HBS Scenario Runner")
         result = scenario_runner_instance.run()
     finally:
         if scenario_runner_instance is not None:
             scenario_runner_instance.destroy()
             del scenario_runner_instance
-    print("Stopped scenario runner, Result:", result)
+    print("Stopped HBS Scenario Runner, Result:", result)
 
 
 def wait_until_SR_loaded(scenario_runner_instance, ping_freq_s=0.5):
@@ -112,12 +112,14 @@ def scenario_runner_args(parser):
     parser.add_argument("--configFile", default="")
     parser.add_argument("--additionalScenario", default="")
     parser.add_argument("--debug", action="store_true", default=False)
+    parser.add_argument("--noBackgroundActivity", action="store_true", default=False)
     parser.add_argument("--reloadWorld", action="store_true", default=True)
     parser.add_argument("--record", type=str, default="")
     parser.add_argument("--randomize", action="store_true")
     parser.add_argument("--repetitions", default=1, type=int)
     parser.add_argument("--waitForEgo", action="store_true")
     parser.add_argument("--outputDir", default="")
+    parser.add_argument("--scenarioName", default="")
 
     # arguments we're ignoring
     parser.add_argument("--file", action="store_true")
@@ -151,7 +153,7 @@ def main():
 
     client = carla.Client(args.host, args.port)
 
-    scenario_runner_instance = ScenarioRunner(args)
+    scenario_runner_instance = HBSScenarioRunner(args)
 
     # start the listening recorder thread (background, waits for scenario to begin)
     recording_thread = Thread(

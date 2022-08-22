@@ -82,21 +82,36 @@
     </route>    
     <route id="4" town="Town01">
         <weather 
-            cloudiness="10"
+            cloudiness="0"
             precipitation="0"
             precipitation_deposits="0"
-            wind_intensity="50"
+            wind_intensity="20"
             sun_azimuth_angle="0"
-            sun_altitude_angle="35"
-            fog_density="100"
-            fog_distance="1000"
-            fog_falloff="1"
+            sun_altitude_angle="45"
+            fog_density="0"
+            fog_distance="0"
             wetness="0"
         />
         <waypoint pitch="0.0" roll="0.0" x="173.50" y="59.90" yaw="0.0" z="0.0" />
         <waypoint pitch="0.0" roll="0.0" x="199.90" y="59.90" yaw="0.0" z="0.0" />
         <waypoint pitch="0.0" roll="0.0" x="315.50" y="59.90" yaw="0.0" z="0.0" />
-    </route>    
+    </route>   
+    <route id="4c" town="Town01">
+        <weather 
+            cloudiness="30"
+            precipitation="80"
+            precipitation_deposits="70"
+            wind_intensity="100"
+            sun_azimuth_angle="-1"
+            sun_altitude_angle="15"
+            fog_density="100"
+            fog_distance="0.75"
+            wetness="20"
+        />
+        <waypoint pitch="0.0" roll="0.0" x="173.50" y="59.90" yaw="0.0" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="199.90" y="59.90" yaw="0.0" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="315.50" y="59.90" yaw="0.0" z="0.0" />
+    </route>      
     <route id="5" town="Town03">
         <weather 
             cloudiness="10"

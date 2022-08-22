@@ -13,6 +13,7 @@ from __future__ import print_function
 import math
 import py_trees
 import carla
+import random
 
 from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
 from srunner.scenariomanager.scenarioatomics.atomic_behaviors import (ActorTransformSetter,
@@ -39,6 +40,110 @@ from srunner.scenariomanager.timer import TimeOut
 from srunner.scenarios.basic_scenario import BasicScenario
 from srunner.tools.scenario_helper import get_location_in_distance_from_wp
 from srunner.tools.scenario_helper import get_waypoint_in_distance
+
+
+def is_lane_a_parking(waypoint):
+    """
+    This function filters false negative Shoulder which are in reality Parking lanes.
+    These are differentiated from the others because, similar to the driving lanes,
+    they have, on the right, a small Shoulder followed by a Sidewalk.
+    """
+
+    # Parking are wide lanes
+    if waypoint.lane_width > 2:
+        wp_next = waypoint.get_right_lane()
+
+        # That are next to a mini-Shoulder
+        if wp_next is not None and wp_next.lane_type == carla.LaneType.Shoulder:
+            wp_next_next = wp_next.get_right_lane()
+
+            # Followed by a Sidewalk
+            if wp_next_next is not None and wp_next_next.lane_type == carla.LaneType.Sidewalk:
+                return True
+
+    return False
+
+def get_sidewalk_transform(waypoint, offset_yaw=-90, offset_z=0.2, offset_dist=1.5):
+    """
+    Processes the waypoint transform to find a suitable spawning one at the sidewalk.
+    It first rotates the transform so that it is pointing towards the road and then moves a
+    bit to the side waypoint that aren't part of sidewalks, as they might be invading the road
+    """
+    new_rotation = waypoint.transform.rotation
+    new_rotation.yaw += offset_yaw
+
+    if waypoint.lane_type == carla.LaneType.Sidewalk:
+        new_location = waypoint.transform.location
+    else:
+        right_vector = waypoint.transform.get_right_vector()
+        offset_location = carla.Location(offset_dist * right_vector.x, offset_dist * right_vector.y)
+        new_location = waypoint.transform.location + offset_location
+    new_location.z += offset_z
+
+    return carla.Transform(new_location, new_rotation)
+
+def get_opposite_sidewalk_transform(waypoint, offset_yaw=90, offset_z=0.2, offset_dist=2.5):
+    """
+    Processes the waypoint transform to find a suitable spawning one at the sidewalk.
+    It first rotates the transform so that it is pointing towards the road and then moves a
+    bit to the side waypoint that aren't part of sidewalks, as they might be invading the road
+    """
+    new_rotation = waypoint.transform.rotation
+    new_rotation.yaw += offset_yaw
+
+    # if waypoint.lane_type == carla.LaneType.Sidewalk:
+    #     new_location = waypoint.transform.location
+    # else:
+    right_vector = waypoint.transform.get_right_vector()
+    offset_location = carla.Location(offset_dist * right_vector.x, offset_dist * right_vector.y)
+    new_location = waypoint.transform.location + offset_location
+    new_location.z += offset_z
+
+    return carla.Transform(new_location, new_rotation)
+
+def get_number_of_lanes(waypoint):
+    """
+    Returns the number of driving lanes
+    Gets the driving / parking lane that is most to the right of the waypoint
+    as well as the number of lane changes done
+    """
+    lane_changes = 0
+
+    wp = waypoint
+
+    # count lane changes to the right of the waypoint
+    while True:
+        wp_next = wp.get_right_lane()
+        lane_changes += 1
+
+        if wp_next is None or wp_next.lane_type == carla.LaneType.Sidewalk:
+            break
+        elif wp_next.lane_type == carla.LaneType.Shoulder:
+            # Filter Parkings considered as Shoulders
+            if is_lane_a_parking(wp_next):
+                lane_changes += 1
+            break
+        wp = wp_next
+
+    wp = waypoint
+    # count lane changes to the left of the waypoint
+    while True:
+        wp_next = wp.get_left_lane()
+        if wp_next == wp:
+            break
+        lane_changes += 1
+
+        if wp_next is None or wp_next.lane_type == carla.LaneType.Sidewalk:
+            break
+        elif wp_next.lane_type == carla.LaneType.Shoulder:
+            # Filter Parkings considered as Shoulders
+            if is_lane_a_parking(wp_next):
+                lane_changes += 1
+            break
+        print('lane_changes:', lane_changes, wp_next, wp_next.lane_type)
+        wp = wp_next
+    return lane_changes
+
 
 class CustomObjectCrossing(BasicScenario):
     def __init__(self, world, ego_vehicles, config, randomize=False, debug_mode=False, criteria_enable=True, timeout=60):
@@ -98,6 +203,188 @@ class CustomObjectCrossing(BasicScenario):
 
         return sequence
 
+
+    def _create_test_criteria(self):
+        """
+        A list of all test criteria will be created that is later used
+        in parallel behavior tree.
+        """
+        criteria = []
+
+        collision_criterion = CollisionTest(self.ego_vehicles[0])
+        criteria.append(collision_criterion)
+
+        return criteria
+
+    def __del__(self):
+        """
+        Remove all actors upon deletion
+        """
+        self.remove_all_actors()
+
+
+class PedestrianCrossingNew(BasicScenario):
+
+    """
+    This class holds everything required for a simple object crash
+    without prior vehicle action involving a vehicle and a cyclist/pedestrian,
+    The ego vehicle is passing through a road,
+    And encounters a cyclist/pedestrian crossing the road.
+
+    This is a single ego vehicle scenario
+    """
+
+    def __init__(self, world, ego_vehicles, config,
+                 adversary_type='walker.*', blocker_type='static.prop.vendingmachine',
+                 randomize=False, debug_mode=False, criteria_enable=True, timeout=60):
+        """
+        Setup all relevant parameters and create scenario
+        """
+        self._wmap = CarlaDataProvider.get_map()
+        self._trigger_location = config.trigger_points[0].location
+        self._reference_waypoint = self._wmap.get_waypoint(self._trigger_location)
+        self._num_lane_changes = 0
+
+        self._start_distance = 12
+        self._blocker_shift = 0.9
+        self._retry_dist = 0.4
+
+        self._adversary_type = adversary_type  # blueprint filter of the adversary
+        self._blocker_type = blocker_type  # blueprint filter of the blocker
+        self._adversary_transform = None
+        self._blocker_transform = None
+        self._collision_wp = None
+
+        self._adversary_speed = 4.0  # Speed of the adversary [m/s]
+        self._reaction_time = 0.8  # Time the agent has to react to avoid the collision [s]
+        self._reaction_ratio = 0.12  # The higehr the number of lane changes, the smaller the reaction time
+        self._min_trigger_dist = 6.0  # Min distance to the collision location that triggers the adversary [m]
+        self._ego_end_distance = 40
+        self.timeout = timeout
+
+        self._number_of_attempts = 6
+
+        super(PedestrianCrossingNew, self).__init__("PedestrianCrossingNew",
+                                                    ego_vehicles,
+                                                    config,
+                                                    world,
+                                                    debug_mode,
+                                                    criteria_enable=criteria_enable)
+
+    def _get_sidewalk_transform(self, waypoint, offset):
+        """
+        Processes the waypoint transform to find a suitable spawning one at the sidewalk.
+        It first rotates the transform so that it is pointing towards the road and then moves a
+        bit to the side waypoint that aren't part of sidewalks, as they might be invading the road
+        """
+
+        new_rotation = waypoint.transform.rotation
+        new_rotation.yaw += offset['yaw']
+
+        if waypoint.lane_type == carla.LaneType.Sidewalk:
+            new_location = waypoint.transform.location
+        else:
+            right_vector = waypoint.transform.get_right_vector()
+            offset_dist = waypoint.lane_width * offset["k"]
+            offset_location = carla.Location(offset_dist * right_vector.x, offset_dist * right_vector.y)
+            new_location = waypoint.transform.location + offset_location
+        new_location.z += offset['z']
+
+        return carla.Transform(new_location, new_rotation)
+
+    def _initialize_actors(self, config):
+        """
+        Custom initialization
+        """
+        # Get the waypoint in front of the ego.
+        move_dist = self._start_distance
+        waypoint = self._reference_waypoint
+        while self._number_of_attempts > 0:
+            self._num_lane_changes = 0
+
+            # Move to the front
+            location, _ = get_location_in_distance_from_wp(waypoint, move_dist, False)
+            waypoint = self._wmap.get_waypoint(location)
+            self._collision_wp = waypoint
+
+            # Move to the right
+            sidewalk_waypoint = waypoint
+            while sidewalk_waypoint.lane_type != carla.LaneType.Sidewalk:
+                right_wp = sidewalk_waypoint.get_right_lane()
+                if right_wp is None:
+                    break  # No more right lanes
+                sidewalk_waypoint = right_wp
+                self._num_lane_changes += 1
+
+            # Get the adversary transform and spawn it
+            offset = {"yaw": 270, "z": 0.5, "k": 1.0}
+            self._adversary_transform = self._get_sidewalk_transform(sidewalk_waypoint, offset)
+            adversary = CarlaDataProvider.request_new_actor(self._adversary_type, self._adversary_transform)
+            if adversary is None:
+                self._number_of_attempts -= 1
+                move_dist = self._retry_dist
+                continue
+
+            # Get the blocker transform and spawn it
+            blocker_wp = sidewalk_waypoint.previous(self._blocker_shift)[0]
+            offset = {"yaw": 90, "z": 0.0, "k": 1.0}
+            self._blocker_transform = self._get_sidewalk_transform(blocker_wp, offset)
+            blocker = CarlaDataProvider.request_new_actor(self._blocker_type, self._blocker_transform)
+            if not blocker:
+                adversary.destroy()
+                self._number_of_attempts -= 1
+                move_dist = self._retry_dist
+                continue
+
+            # Both actors where summoned, end
+            break
+
+        if self._number_of_attempts == 0:
+            raise Exception("Couldn't find viable position for the adversary and blocker actors")
+
+        if isinstance(adversary, carla.Vehicle):
+            adversary.apply_control(carla.VehicleControl(hand_brake=True))
+        blocker.set_simulate_physics(enabled=False)
+        self.other_actors.append(adversary)
+        self.other_actors.append(blocker)
+
+    def _create_behavior(self):
+        """
+        After invoking this scenario, cyclist will wait for the user
+        controlled vehicle to enter trigger distance region,
+        the cyclist starts crossing the road once the condition meets,
+        then after 60 seconds, a timeout stops the scenario
+        """
+        sequence = py_trees.composites.Sequence()
+        collision_location = self._collision_wp.transform.location
+        collision_distance = collision_location.distance(self._adversary_transform.location)
+        collision_duration = collision_distance / self._adversary_speed
+        reaction_time = self._reaction_time - self._reaction_ratio * self._num_lane_changes
+        collision_time_trigger = collision_duration + reaction_time
+
+        # Wait until ego is close to the adversary
+        trigger_adversary = py_trees.composites.Parallel(
+            policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE, name="TriggerAdversaryStart")
+        trigger_adversary.add_child(InTimeToArrivalToLocation(
+            self.ego_vehicles[0], collision_time_trigger, collision_location))
+        trigger_adversary.add_child(InTriggerDistanceToLocation(
+            self.ego_vehicles[0], collision_location, self._min_trigger_dist))
+        sequence.add_child(trigger_adversary)
+
+        # Move the adversary
+        speed_duration = 2.0 * collision_duration
+        speed_distance = 2.0 * collision_distance
+        sequence.add_child(KeepVelocity(
+            self.other_actors[0], self._adversary_speed,
+            duration=speed_duration, distance=speed_distance, name="AdversaryCrossing"))
+            
+
+        # Remove everything
+        sequence.add_child(DriveDistance(self.ego_vehicles[0], self._ego_end_distance, name="EndCondition"))
+        sequence.add_child(ActorDestroy(self.other_actors[0], name="DestroyAdversary"))
+        sequence.add_child(ActorDestroy(self.other_actors[1], name="DestroyBlocker"))
+
+        return sequence
 
     def _create_test_criteria(self):
         """
@@ -635,7 +922,7 @@ class CyclistCrossing(BasicScenario):
         self.remove_all_actors()
 
 
-class PedestrianCrossing(BasicScenario):
+class PedestrianCrossingOLD(BasicScenario):
 
     """
     This class holds everything required for a simple object crash
@@ -674,7 +961,7 @@ class PedestrianCrossing(BasicScenario):
 
         self._number_of_attempts = 6
 
-        super(PedestrianCrossing, self).__init__("PedestrianCrossing",
+        super(PedestrianCrossingOLD, self).__init__("PedestrianCrossingOLD",
                                                     ego_vehicles,
                                                     config,
                                                     world,
@@ -815,8 +1102,521 @@ class PedestrianCrossing(BasicScenario):
 
 
 
-
 class CrowdCrossing(BasicScenario):
+
+    """
+    This class holds everything required for a simple object crash
+    without prior vehicle action involving a vehicle and a pedestrian,
+    The ego vehicle is passing through a road,
+    And encounters a pedestrian crossing the road.
+    This is a single ego vehicle scenario
+    """
+
+    def __init__(self, world, ego_vehicles, config,
+                 randomize=False, debug_mode=False, criteria_enable=True, timeout=60):
+        """
+        Setup all relevant parameters and create scenario
+        """
+        self._wmap = CarlaDataProvider.get_map()
+        self._trigger_location = config.trigger_points[0].location
+        self._reference_waypoint = self._wmap.get_waypoint(self._trigger_location)
+        self._num_lane_changes = 0
+        self._max_pedestrians = 6
+
+
+        # num_lanes = get_number_of_lanes(self._reference_waypoint)
+        # print('num_lanes:', num_lanes)
+
+        self._pedestrian_type = 'walker.*'  # blueprint filter of the pedestrian
+        self._blocker_type = 'static.prop.vendingmachine'  # blueprint filter of the blocker
+        # self._adversary_transform = None
+        self._blocker_transform = None
+        self._collision_wp = None
+        self.timeout = timeout
+
+
+        self._init_settings()
+
+        self._number_of_attempts = 6
+        self._pedestrians = []
+
+        super(CrowdCrossing, self).__init__("CrowdCrossing",
+                                                    ego_vehicles,
+                                                    config,
+                                                    world,
+                                                    debug_mode,
+                                                    criteria_enable=criteria_enable)
+
+    def _init_settings(self):
+        self._num_pedestrians = random.randint(0.5*self._max_pedestrians, self._max_pedestrians)
+        self._start_distance = 15
+        self._blocker_shift = 0.9
+        self._actor_position_shift = 0.9
+        self._retry_dist = 0.4
+
+        self._pedestrian_speed = 4.0  # Speed of the pedestrian [m/s]
+        self._reaction_time = 0.8     #0.8  # Time the agent has to react to avoid the collision [s]
+        self._reaction_ratio = 0.12   # The higehr the number of lane changes, the smaller the reaction time
+        self._min_trigger_dist = 12.0  # Min distance to the collision location that triggers the pedestrian [m]
+        self._ego_end_distance = 40
+
+    def _get_spawn_waypoint( self, distance):
+
+        # Move to the front
+        location, _ = get_location_in_distance_from_wp(self._reference_waypoint, distance, False)
+        waypoint = self._wmap.get_waypoint(location)
+
+        # Move to the right
+        sidewalk_waypoint = waypoint
+        while sidewalk_waypoint.lane_type != carla.LaneType.Sidewalk:
+            right_wp = sidewalk_waypoint.get_right_lane()
+            if right_wp is None:
+                break  # No more right lanes
+            sidewalk_waypoint = right_wp
+            self._num_lane_changes += 1
+
+        return waypoint, sidewalk_waypoint
+
+    def _initialize_actors(self, config):
+
+        move_dist = self._start_distance
+
+        while self._number_of_attempts > 0:
+            self._collision_wp, spawn_waypoint = self._get_spawn_waypoint(move_dist)
+
+            # import pdb; pdb.set_trace()
+            if self._initialize_pedestrians( spawn_waypoint, config ):
+                self._initialize_blocker( spawn_waypoint, config )
+                break
+            else:
+                self._number_of_attempts -= 1
+                move_dist = self._retry_dist
+
+        if self._number_of_attempts == 0:
+            raise Exception("Couldn't find viable position for the adversary and blocker actors")
+
+
+    def _initialize_blocker(self, spawn_waypoint, config):
+        # Get the blocker transform and spawn it
+        self._blocker_transform = get_sidewalk_transform( spawn_waypoint, offset_yaw=90, offset_z=0.0, offset_dist=1.0 )
+        blocker = CarlaDataProvider.request_new_actor(self._blocker_type, self._blocker_transform)
+        blocker.set_simulate_physics(enabled=False)
+        self.other_actors.append(blocker)
+
+    def _initialize_pedestrians(self, spawn_waypoint, config):
+        # Get the pedestrian transform and spawn it
+        #import pdb; pdb.set_trace()
+        pedestrian_shift = self._actor_position_shift
+        pedestrian_wp = spawn_waypoint
+        for i in range(self._num_pedestrians):
+            waypoint = spawn_waypoint.next(pedestrian_shift)[0]
+            transform = get_sidewalk_transform( waypoint, offset_yaw=270, offset_z=0.5, offset_dist=1.50 )
+            actor = CarlaDataProvider.request_new_actor(self._pedestrian_type, transform)
+            if actor:
+                pedestrian = {}
+                pedestrian[ 'transform' ] = transform
+                pedestrian[ 'speed' ] = self._pedestrian_speed * random.uniform(0.0, 1.0)
+                pedestrian[ 'delay' ] = 0.0
+                pedestrian[ 'actor' ] = actor
+                pedestrian['crossing'] = True 
+                self._pedestrians.append( pedestrian )        
+                self.other_actors.append( actor )
+                pedestrian_shift += self._actor_position_shift
+
+        # randomly choose one pedestrian to delay crossing
+        n_pedestrians = len(self._pedestrians)
+        if n_pedestrians > 0:
+            i = random.randint(0, n_pedestrians-1)
+            self._pedestrians[i]['delay'] = 5*random.uniform(0.25, 0.75)
+            self._pedestrians[i][ 'speed' ] = self._pedestrian_speed
+            self._reaction_time += self._pedestrians[i]['delay']
+
+        if n_pedestrians > 1 and random.random() > 0.5:
+            i = random.randint(0, n_pedestrians-1)
+            self._pedestrians[i]['crossing'] = False 
+
+        return True
+
+    def _create_behavior(self):
+        """
+        After invoking this scenario, cyclist will wait for the user
+        controlled vehicle to enter trigger distance region,
+        the cyclist starts crossing the road once the condition meets,
+        then after 60 seconds, a timeout stops the scenario
+        """        
+        sequence = py_trees.composites.Sequence()
+
+
+        # Trigger the crowsing based on the furthest pedestrian from the ego vehicle
+        collision_location = self._collision_wp.transform.location
+       
+        # Wait until ego is close to the pedestrian
+        trigger_crowd = py_trees.composites.Parallel(
+            policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE, name="TriggeCrowdCrossingStart")
+        
+        if len(self._pedestrians) > 0:
+            collision_distance = collision_location.distance(self._pedestrians[0]['transform'].location)
+            collision_duration = collision_distance / self._pedestrian_speed
+            reaction_time = self._reaction_time - self._reaction_ratio * self._num_lane_changes
+            collision_time_trigger = collision_duration + reaction_time
+            trigger_crowd.add_child(InTimeToArrivalToLocation(
+                self.ego_vehicles[0], collision_time_trigger, collision_location))
+
+        trigger_crowd.add_child(InTriggerDistanceToLocation(
+            self.ego_vehicles[0], collision_location, self._min_trigger_dist))
+        sequence.add_child(trigger_crowd)
+
+
+
+        crowd_crossing_street = py_trees.composites.Parallel(
+        "CrowdCrossing",
+        policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+
+        for i, pedestrian in enumerate(self._pedestrians):
+
+            if not pedestrian['crossing']:
+                continue
+
+            # Move the pedestrian
+            collision_distance = collision_location.distance(pedestrian['transform'].location)
+            collision_duration = collision_distance / pedestrian['speed']
+            speed_duration = 2.0 * collision_duration * self._num_lane_changes
+            speed_distance = 2.0 * collision_distance * self._num_lane_changes
+
+            print('speed_duration:', speed_duration, 'speed_distance:', speed_distance, 'pseed:',pedestrian['speed'], 'delay:',pedestrian['delay'])
+            pedestrian_crossing = py_trees.composites.Sequence("Pedestrian" + str(i))
+            pedestrian_crossing.add_child(TimeOut( pedestrian['delay'] ))
+            pedestrian_crossing.add_child(KeepVelocity(
+                pedestrian['actor'], 
+                pedestrian['speed'],
+                duration=speed_duration + pedestrian['delay'], 
+                distance=speed_distance, 
+                name="Pedestrian" + str(i) + "Crossing"))
+
+            crowd_crossing_street.add_child( pedestrian_crossing )
+
+        sequence.add_child(crowd_crossing_street)
+
+        # Remove everything
+        sequence.add_child(DriveDistance(self.ego_vehicles[0], self._ego_end_distance, name="EndCondition"))
+
+        for i, actor in enumerate(self.other_actors):
+            sequence.add_child(ActorDestroy(actor, name="DestroyActor" + str(i)))
+
+        # for i, pedestrian in enumerate(self._pedestrians):
+        #     sequence.add_child(ActorDestroy(pedestrian['actor'], name="DestroyPedestrian" + str(i)))
+
+        # sequence.add_child(ActorDestroy(self.other_actors[-1], name="DestroyBlocker"))
+        
+        return sequence
+
+    def _create_test_criteria(self):
+        """
+        A list of all test criteria will be created that is later used
+        in parallel behavior tree.
+        """
+        criteria = []
+
+        collision_criterion = CollisionTest(self.ego_vehicles[0])
+        criteria.append(collision_criterion)
+
+        return criteria
+
+    def __del__(self):
+        """
+        Remove all actors upon deletion
+        """
+        self.remove_all_actors()
+
+
+class CrowdCrossingOppositeSidewalk(CrowdCrossing):
+
+    """
+    This class holds everything required for a construction scenario
+    The ego vehicle is passing through a road and encounters
+    a stationary rectangular construction cones setup and traffic warning.
+
+    This is a single ego vehicle scenario
+    """
+
+    def __init__(
+            self, 
+            world, 
+            ego_vehicles, 
+            config,
+            randomize=False, 
+            debug_mode=False, 
+            criteria_enable=True, 
+            timeout=60):
+        """
+        Setup all relevant parameters and create scenario
+        """
+
+        # # self._pedestrian_speed = 4.0  # Speed of the pedestrian [m/s]
+        # self._reaction_time = 2.8     #0.8  # Time the agent has to react to avoid the collision [s]
+        # self._reaction_ratio = 0.12   # The higehr the number of lane changes, the smaller the reaction time
+        # self._min_trigger_dist = 16.0  # Min distance to the collision location that triggers the pedestrian [m]
+
+
+        super(
+            CrowdCrossingOppositeSidewalk,
+            self).__init__(
+            world,
+            ego_vehicles=ego_vehicles,
+            config=config,
+            debug_mode=debug_mode,
+            criteria_enable=criteria_enable,
+            timeout=timeout)
+
+    def _init_settings(self):
+        CrowdCrossing._init_settings( self )
+
+        self._start_distance = 20
+        # self._blocker_shift = 0.9
+        # self._actor_position_shift = 0.9
+        # self._retry_dist = 0.4
+
+        # self._pedestrian_speed = 4.0  # Speed of the pedestrian [m/s]
+        self._reaction_time = 1.8     #0.8  # Time the agent has to react to avoid the collision [s]
+        # self._reaction_ratio = 0.12   # The higehr the number of lane changes, the smaller the reaction time
+        # self._min_trigger_dist = 6.0  # Min distance to the collision location that triggers the pedestrian [m]
+        # self._ego_end_distance = 40
+
+
+
+
+    def _initialize_blocker(self, spawn_waypoint, config):
+        # Get the blocker transform and spawn it
+        dist = spawn_waypoint.lane_width
+        self._blocker_transform = get_opposite_sidewalk_transform( spawn_waypoint, offset_yaw=-90, offset_z=0.0, offset_dist=-13.0 )
+        blocker = CarlaDataProvider.request_new_actor(self._blocker_type, self._blocker_transform)
+        blocker.set_simulate_physics(enabled=False)
+        self.other_actors.append(blocker)
+
+    # def _initialize_pedestriansa(self, spawn_waypoint, config):
+    #     # Get the pedestrian transform and spawn it
+    #     #import pdb; pdb.set_trace()
+    #     pedestrian_shift = self._actor_position_shift
+    #     pedestrian_wp = spawn_waypoint
+    #     for pedestrian in self._pedestrians:
+    #         pedestrian_wp = spawn_waypoint.next(pedestrian_shift)[0]
+    #         pedestrian['transform'] = get_opposite_sidewalk_transform( pedestrian_wp, offset_yaw=90, offset_z=0.5, offset_dist=-13 )
+    #         pedestrian['actor'] = CarlaDataProvider.request_new_actor(self._pedestrian_type, pedestrian['transform'])
+    #         if pedestrian['actor']:
+    #             self.other_actors.append(pedestrian['actor'])
+    #             pedestrian_shift += self._actor_position_shift
+        
+    #     return True
+
+
+    def _initialize_pedestrians(self, spawn_waypoint, config):
+        # Get the pedestrian transform and spawn it
+        #import pdb; pdb.set_trace()
+        pedestrian_shift = self._actor_position_shift
+        pedestrian_wp = spawn_waypoint
+
+        self._pedestrians = []
+
+        for i in range(self._num_pedestrians):
+            waypoint = spawn_waypoint.next(pedestrian_shift)[0]
+            transform = get_opposite_sidewalk_transform( waypoint, offset_yaw=90, offset_z=0.5, offset_dist=-13 + 2*random.random() )
+            actor = CarlaDataProvider.request_new_actor(self._pedestrian_type, transform)
+            if actor:
+                pedestrian = {}
+                pedestrian[ 'transform' ] = transform
+                pedestrian[ 'speed' ] = self._pedestrian_speed * random.uniform(0.75, 1.0)
+                pedestrian[ 'delay' ] = 0.0
+                pedestrian[ 'actor' ] = actor
+                pedestrian[ 'crossing' ] = True 
+                self._pedestrians.append( pedestrian )        
+                self.other_actors.append( actor )
+                pedestrian_shift += self._actor_position_shift
+
+        # randomly choose one pedestrian to delay crossing
+        n_pedestrians = len(self._pedestrians)
+        if n_pedestrians > 0:
+            i = random.randint(0, n_pedestrians-1)
+            self._pedestrians[i]['delay'] = self._reaction_time*random.uniform(0.25, 0.75)
+            self._pedestrians[i][ 'speed' ] = self._pedestrian_speed
+            # self._pedestrians[i]['delay'] = random.uniform(0.5*self._reaction_time, self._reaction_time)
+            self._reaction_time += self._pedestrians[i]['delay']
+
+            i = random.randint(0, n_pedestrians-1)
+            self._pedestrians[i]['delay'] = self._pedestrian_speed
+
+        if n_pedestrians > 1 and random.random() > 0.5:
+            i = random.randint(0, n_pedestrians-1)
+            self._pedestrians[i][ 'crossing' ] = False 
+
+        return True
+
+class CrowdCrossingNoBlocker(CrowdCrossing):
+
+    """
+    This class holds everything required for a construction scenario
+    The ego vehicle is passing through a road and encounters
+    a stationary rectangular construction cones setup and traffic warning.
+
+    This is a single ego vehicle scenario
+    """
+
+    def __init__(
+            self, 
+            world, 
+            ego_vehicles, 
+            config,
+            randomize=False, 
+            debug_mode=False, 
+            criteria_enable=True, 
+            timeout=60):
+        """
+        Setup all relevant parameters and create scenario
+        """
+
+        super(
+            CrowdCrossingNoBlocker,
+            self).__init__(
+            world,
+            ego_vehicles=ego_vehicles,
+            config=config,
+            debug_mode=debug_mode,
+            criteria_enable=criteria_enable,
+            timeout=timeout)
+
+    def _initialize_blocker(self, spawn_waypoint, config):
+        pass
+
+
+class CrowdCrossingOppositeSidewalkNoBlocker(CrowdCrossingOppositeSidewalk):
+
+    """
+    This class holds everything required for a construction scenario
+    The ego vehicle is passing through a road and encounters
+    a stationary rectangular construction cones setup and traffic warning.
+
+    This is a single ego vehicle scenario
+    """
+
+    def __init__(
+            self, 
+            world, 
+            ego_vehicles, 
+            config,
+            randomize=False, 
+            debug_mode=False, 
+            criteria_enable=True, 
+            timeout=60):
+        """
+        Setup all relevant parameters and create scenario
+        """
+
+        super(
+            CrowdCrossingOppositeSidewalkNoBlocker,
+            self).__init__(
+            world,
+            ego_vehicles=ego_vehicles,
+            config=config,
+            debug_mode=debug_mode,
+            criteria_enable=criteria_enable,
+            timeout=timeout)
+
+    def _initialize_blocker(self, spawn_waypoint, config):
+        pass
+
+
+class PedestrianCrossing(CrowdCrossing):
+
+    """
+    This class holds everything required for a construction scenario
+    The ego vehicle is passing through a road and encounters
+    a stationary rectangular construction cones setup and traffic warning.
+
+    This is a single ego vehicle scenario
+    """
+
+    def __init__(
+            self, 
+            world, 
+            ego_vehicles, 
+            config,
+            randomize=False, 
+            debug_mode=False, 
+            criteria_enable=True, 
+            timeout=60):
+        """
+        Setup all relevant parameters and create scenario
+        """
+
+        super(
+            PedestrianCrossing,
+            self).__init__(
+            world,
+            ego_vehicles=ego_vehicles,
+            config=config,
+            debug_mode=debug_mode,
+            criteria_enable=criteria_enable,
+            timeout=timeout)
+
+    def _init_settings(self):
+        CrowdCrossing._init_settings( self )
+        self._num_pedestrians = 1
+
+    def _initialize_pedestrians(self, spawn_waypoint, config):
+        pedestrian_shift = self._actor_position_shift
+        waypoint = spawn_waypoint.next(pedestrian_shift)[0]
+        transform = get_sidewalk_transform( waypoint, offset_yaw=270, offset_z=0.5, offset_dist=1.50 )
+        actor = CarlaDataProvider.request_new_actor(self._pedestrian_type, transform)
+        if actor:
+            pedestrian = {}
+            pedestrian[ 'transform' ] = transform
+            pedestrian[ 'speed' ] =  self._pedestrian_speed
+            pedestrian[ 'delay' ] = 0.0
+            pedestrian[ 'actor' ] = actor
+            pedestrian[ 'crossing' ] = True
+            self._pedestrians.append( pedestrian )        
+            self.other_actors.append( actor )
+            pedestrian_shift += self._actor_position_shift
+
+        return True
+
+class PedestrianCrossingNoBlocker(PedestrianCrossing):
+
+    """
+    This class holds everything required for a construction scenario
+    The ego vehicle is passing through a road and encounters
+    a stationary rectangular construction cones setup and traffic warning.
+
+    This is a single ego vehicle scenario
+    """
+
+    def __init__(
+            self, 
+            world, 
+            ego_vehicles, 
+            config,
+            randomize=False, 
+            debug_mode=False, 
+            criteria_enable=True, 
+            timeout=60):
+        """
+        Setup all relevant parameters and create scenario
+        """
+
+        super(
+            PedestrianCrossingNoBlocker,
+            self).__init__(
+            world,
+            ego_vehicles=ego_vehicles,
+            config=config,
+            debug_mode=debug_mode,
+            criteria_enable=criteria_enable,
+            timeout=timeout)
+
+    def _initialize_blocker(self, spawn_waypoint, config):
+        pass
+
+
+class CrowdCrossingOLD(BasicScenario):
 
     """
     This class holds everything required for a simple object crash
@@ -855,7 +1655,7 @@ class CrowdCrossing(BasicScenario):
 
         self._number_of_attempts = 6
 
-        super(CrowdCrossing, self).__init__("CrowdCrossing",
+        super(CrowdCrossingOLD, self).__init__("CrowdCrossingOLD",
                                                     ego_vehicles,
                                                     config,
                                                     world,
