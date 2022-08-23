@@ -29,6 +29,7 @@ from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
 from srunner.scenariomanager.scenarioatomics.atomic_behaviors import Idle, ScenarioTriggerer
 from srunner.scenarios.basic_scenario import BasicScenario
 from srunner.tools.route_parser import RouteParser, TRIGGER_THRESHOLD, TRIGGER_ANGLE_THRESHOLD
+from srunner.tools.hbs_entity_parser import EntityParser
 from srunner.tools.route_manipulation import interpolate_trajectory
 from srunner.tools.py_trees_port import oneshot_behavior
 
@@ -77,12 +78,13 @@ class HBSRouteScenario(RouteScenario):
     along which several smaller scenarios are triggered
     """
 
-    def __init__(self, world, config, debug_mode=False, criteria_enable=True, timeout=300, enable_background_activty=False, scenario_name=None):
+    def __init__(self, world, config, debug_mode=False, criteria_enable=True, timeout=300, enable_background_activty=False, scenario_name=None, entities_file=None):
         """
         Setup all relevant parameters and create scenarios along route
         """
         self.enable_background_activty = enable_background_activty
         self.scenario_name = scenario_name
+        self.entities_file = entities_file
 
         super(HBSRouteScenario, self).__init__(
                                             config=config,
@@ -134,6 +136,25 @@ class HBSRouteScenario(RouteScenario):
                 self.other_actors.pop(i) # removes reference to any DReyeVR ego vehicles that might've been spawned
                 # NOTE: even if it thinks it spawned DReyeVR ego vehicles, it cant. Only one can be spawned by the
                 # carla ActorRegistry (See RegisterActor)
+
+        # add entities
+        self._add_entities()
+
+    def _add_entities(self):
+        if not self.entities_file: return
+        entities = EntityParser.parse( self.entities_file )
+        for entity in entities:
+
+            try:
+                location = carla.Location( entity.x, entity.y, entity.z )
+                transform = carla.Transform( location, carla.Rotation(yaw=entity.yaw, roll=entity.roll, pitch=entity.pitch))
+                actor = CarlaDataProvider.request_new_actor( entity.type, transform)
+                self.other_actors.append( actor )
+
+                # static.set_simulate_physics(enabled=False)
+            except RuntimeError as r:
+                # We keep retrying until we spawn
+                print("Unable to spawn actor " + entity.type, transform)
 
 
     def _build_scenario_instances(self, world, ego_vehicle, scenario_definitions,

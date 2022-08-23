@@ -68,6 +68,7 @@ class HBSScenarioRunner(ScenarioRunner):
         try:
             scenario = HBSRouteScenario(world=self.world,
                                         config=config,
+                                        entities_file=self._args.entities[0],
                                         enable_background_activty=(not self._args.noBackgroundActivity),
                                         scenario_name=self._args.scenarioName,
                                         debug_mode=self._args.debug)

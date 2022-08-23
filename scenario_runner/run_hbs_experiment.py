@@ -104,6 +104,7 @@ def scenario_runner_args(parser):
     parser.add_argument("--sync", action="store_true")
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--route", nargs="+", type=str)
+    parser.add_argument("--entities", nargs="+", type=str)
     parser.add_argument("--agent")
     parser.add_argument("--agentConfig", type=str, default="")
     parser.add_argument("--output", action="store_true", default=True)
