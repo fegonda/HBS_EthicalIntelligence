@@ -45,7 +45,7 @@ from srunner.scenarios.object_crash_intersection import VehicleTurningRoute
 from srunner.scenarios.other_leading_vehicle import OtherLeadingVehicle
 from srunner.scenarios.maneuver_opposite_direction import ManeuverOppositeDirection
 from srunner.scenarios.junction_crossing_route import SignalJunctionCrossingRoute, NoSignalJunctionCrossingRoute
-from srunner.scenarios.hbs_scenarios import CyclistCrossing, CyclistsCrossing, PedestrianCrossing, PedestrianCrossingNoBlocker, CrowdCrossing, CrowdCrossingNoBlocker, CrowdCrossingOppositeSidewalk, CrowdCrossingOppositeSidewalkNoBlocker, CustomObjectCrossing, FollowLeadingVehicleWithObstruction
+from srunner.scenarios.hbs_scenarios import CyclistCrossing, CyclistsCrossing, PedestrianCrossing, PedestrianCrossingNoBlocker, CrowdCrossing, CrowdCrossingNoBlocker, CrowdCrossingOppositeSidewalk, CrowdCrossingOppositeSidewalkNoBlocker, FollowLeadingVehicleWithObstruction
 
 
 NUMBER_CLASS_TRANSLATION = {
@@ -61,7 +61,6 @@ NUMBER_CLASS_TRANSLATION = {
     "Scenario10": NoSignalJunctionCrossingRoute,
     "Scenario11": CyclistCrossing,
     "Scenario12": PedestrianCrossing,
-    "Scenario13": CustomObjectCrossing,
     "Scenario14": CrowdCrossing,
     "Scenario15": FollowLeadingVehicleWithObstruction,
     "Scenario16": CrowdCrossingNoBlocker,

@@ -1,7 +1,7 @@
 import xml.etree.ElementTree as ET
 
 import carla
-from srunner.scenarioconfigs.entity_configuration import EntityConfiguration
+from srunner.scenarioconfigs.hbs_entity_configuration import EntityConfiguration
 
 class EntityParser(object):
 

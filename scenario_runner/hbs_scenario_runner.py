@@ -64,11 +64,14 @@ class HBSScenarioRunner(ScenarioRunner):
         if self._args.sync:
             tm.set_synchronous_mode(True)
 
+        entitiles_file = self._args.entities[0] if self._args.entities else None
+
+        print('entities file:', entitiles_file)
         # Prepare scenario
         try:
             scenario = HBSRouteScenario(world=self.world,
                                         config=config,
-                                        entities_file=self._args.entities[0],
+                                        entities_file=entitiles_file,
                                         enable_background_activty=(not self._args.noBackgroundActivity),
                                         scenario_name=self._args.scenarioName,
                                         debug_mode=self._args.debug)
