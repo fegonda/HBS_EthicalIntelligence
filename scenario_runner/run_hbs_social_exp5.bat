@@ -1,5 +1,5 @@
 cd %SCENARIO_RUNNER_ROOT%
-start python run_hbs_experiment.py --title "HBS AV Experiment 6 - Crowd Crossing in Clear Weather" --route %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_routes.xml  %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_scenarios.json 4 --entities %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_entities.xml --noBackgroundActivity --scenarioNames Scenario17
+start python run_hbs_experiment.py --title "HBS AV Experiment 5 - Crowd Crossing in Clear Weather" --route %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_routes.xml  %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_scenarios.json 4 --entities %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_entities.xml --noBackgroundActivity --scenarioNames Scenario17
 
 SLEEP 50
 

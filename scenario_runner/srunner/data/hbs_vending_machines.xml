@@ -33,7 +33,7 @@
         /> 
         <entity 
             type="static.prop.vendingmachine"
-            x="190.00"
+            x="194.49"
             y="63.60"
             z="0.0"
             pitch="0"

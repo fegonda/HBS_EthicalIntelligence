@@ -32,7 +32,7 @@
                         {
                             "transform": {
                                 "pitch": "0",
-                                "x": "178.30",
+                                "x": "180.30",
                                 "y": "59.90",
                                 "yaw": "0",
                                 "z": "1.0",
@@ -41,6 +41,21 @@
                         }
                     ],
                     "scenario_type": "Scenario12"
+		        },  
+                {
+                    "available_event_configurations": [
+                        {
+                            "transform": {
+                                "pitch": "0",
+                                "x": "214.80",
+                                "y": "59.90",
+                                "yaw": "0",
+                                "z": "1.0",
+                                "route":"4"
+                            }
+                        }
+                    ],
+                    "scenario_type": "Scenario14"
 		        },   
                 {
                     "available_event_configurations": [
