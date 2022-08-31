@@ -45,7 +45,7 @@ from srunner.scenarios.object_crash_intersection import VehicleTurningRoute
 from srunner.scenarios.other_leading_vehicle import OtherLeadingVehicle
 from srunner.scenarios.maneuver_opposite_direction import ManeuverOppositeDirection
 from srunner.scenarios.junction_crossing_route import SignalJunctionCrossingRoute, NoSignalJunctionCrossingRoute
-from srunner.scenarios.hbs_scenarios import CyclistCrossing, CyclistsCrossing, PedestrianCrossing, PedestrianCrossingNoBlocker, CrowdCrossing, CrowdCrossingNoBlocker, CrowdCrossingOppositeSidewalk, CrowdCrossingOppositeSidewalkNoBlocker, FollowLeadingVehicleWithObstruction
+from srunner.scenarios.hbs_scenarios import FollowLeadingVehiclePedestriansCrossing, CyclistCrossing, CyclistsCrossing, PedestrianCrossing, PedestrianCrossingOppositeSidewalk,  CrowdCrossing, CrowdCrossingOppositeSidewalk, FollowLeadingVehicleWithObstruction
 
 
 NUMBER_CLASS_TRANSLATION = {
@@ -59,14 +59,16 @@ NUMBER_CLASS_TRANSLATION = {
     "Scenario8": SignalJunctionCrossingRoute,
     "Scenario9": SignalJunctionCrossingRoute,
     "Scenario10": NoSignalJunctionCrossingRoute,
+    "Scenario15": FollowLeadingVehicleWithObstruction,
+    "Scenario16": FollowLeadingVehiclePedestriansCrossing,
     "Scenario11": CyclistCrossing,
     "Scenario12": PedestrianCrossing,
+    "Scenario13": PedestrianCrossingOppositeSidewalk,
     "Scenario14": CrowdCrossing,
-    "Scenario15": FollowLeadingVehicleWithObstruction,
-    "Scenario16": CrowdCrossingNoBlocker,
+    # "Scenario16": CrowdCrossingNoBlocker,
     "Scenario17": CrowdCrossingOppositeSidewalk,
-    "Scenario18": PedestrianCrossingNoBlocker,
-    "Scenario19": CrowdCrossingOppositeSidewalkNoBlocker
+    # "Scenario18": PedestrianCrossingNoBlocker,
+    # "Scenario19": CrowdCrossingOppositeSidewalkNoBlocker
 }
 
 
@@ -77,13 +79,13 @@ class HBSRouteScenario(RouteScenario):
     along which several smaller scenarios are triggered
     """
 
-    def __init__(self, world, config, debug_mode=False, criteria_enable=True, timeout=300, enable_background_activty=False, scenario_name=None, entities_file=None):
+    def __init__(self, world, config, debug_mode=False, criteria_enable=True, timeout=300, enable_background_activty=False, scenario_names=[], entities_files=None):
         """
         Setup all relevant parameters and create scenarios along route
         """
-        self.enable_background_activty = enable_background_activty
-        self.scenario_name = scenario_name
-        self.entities_file = entities_file
+        self._enable_background_activty = enable_background_activty
+        self._scenario_names = scenario_names
+        self._entities_files = entities_files
 
         super(HBSRouteScenario, self).__init__(
                                             config=config,
@@ -111,7 +113,7 @@ class HBSRouteScenario(RouteScenario):
             'Town10': 120,
         }
 
-        amount = town_amount[config.town] if self.enable_background_activty and config.town in town_amount else 0
+        amount = town_amount[config.town] if self._enable_background_activty and config.town in town_amount else 0
 
         new_actors = CarlaDataProvider.request_new_batch_actors('vehicle.*',
                                                                 amount,
@@ -140,20 +142,21 @@ class HBSRouteScenario(RouteScenario):
         self._add_entities()
 
     def _add_entities(self):
-        if not self.entities_file: return
-        entities = EntityParser.parse( self.entities_file )
-        for entity in entities:
+        if not self._entities_files: return
 
-            try:
-                location = carla.Location( entity.x, entity.y, entity.z )
-                transform = carla.Transform( location, carla.Rotation(yaw=entity.yaw, roll=entity.roll, pitch=entity.pitch))
-                actor = CarlaDataProvider.request_new_actor( entity.type, transform)
-                self.other_actors.append( actor )
+        for entities_file in self._entities_files:
+            entities = EntityParser.parse( entities_file )
+            for entity in entities:
+                try:
+                    location = carla.Location( entity.x, entity.y, entity.z )
+                    transform = carla.Transform( location, carla.Rotation(yaw=entity.yaw, roll=entity.roll, pitch=entity.pitch))
+                    actor = CarlaDataProvider.request_new_actor( entity.type, transform)
+                    self.other_actors.append( actor )
 
-                # static.set_simulate_physics(enabled=False)
-            except RuntimeError as r:
-                # We keep retrying until we spawn
-                print("Unable to spawn actor " + entity.type, transform)
+                    # static.set_simulate_physics(enabled=False)
+                except RuntimeError as r:
+                    # We keep retrying until we spawn
+                    print("Unable to spawn actor " + entity.type, transform)
 
 
     def _build_scenario_instances(self, world, ego_vehicle, scenario_definitions,
@@ -253,11 +256,11 @@ class HBSRouteScenario(RouteScenario):
 
             return False
 
-        def filter_scenarios(scenarios, filter_name):
+        def filter_scenarios(scenarios, filter_names):
             results = []
-            if filter_name:
+            if len(filter_names) > 0:
                 for scenario in scenarios:
-                    if scenario['name'] == filter_name:
+                    if scenario['name'] in filter_names:
                         results.append( scenario )
             else:
                 results = scenarios
@@ -267,7 +270,7 @@ class HBSRouteScenario(RouteScenario):
         sampled_scenarios = []
         # import pdb; pdb.set_trace()
         for trigger in potential_scenarios_definitions.keys():
-            possible_scenarios = filter_scenarios( potential_scenarios_definitions[trigger], self.scenario_name )
+            possible_scenarios = filter_scenarios( potential_scenarios_definitions[trigger], self._scenario_names )
 
             if len( possible_scenarios ) == 0: continue
 

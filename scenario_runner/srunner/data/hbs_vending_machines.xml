@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<towns>
+    <town name="Town01">
+        <entity 
+            type="static.prop.vendingmachine"
+            x="269.00"
+            y="52.50"
+            z="0.0"
+            pitch="0"
+            roll="0"
+            yaw="0"
+            route="4"
+        /> 
+        <entity 
+            type="static.prop.vendingmachine"
+            x="269.00"
+            y="51.30"
+            z="0.0"
+            pitch="0"
+            roll="0"
+            yaw="0"
+            route="4"
+        />        
+        <entity 
+            type="static.prop.vendingmachine"
+            x="269.00"
+            y="50.10"
+            z="0.0"
+            pitch="0"
+            roll="0"
+            yaw="0"
+            route="4"
+        /> 
+        <entity 
+            type="static.prop.vendingmachine"
+            x="190.00"
+            y="63.60"
+            z="0.0"
+            pitch="0"
+            roll="0"
+            yaw="90"
+            route="4"
+        /> 
+
+        <entity 
+            type="static.prop.vendingmachine"
+            x="230.50"
+            y="51.00"
+            z="0.0"
+            pitch="0"
+            roll="0"
+            yaw="180"
+            route="4"
+        />
+        <entity 
+            type="static.prop.vendingmachine"
+            x="230.50"
+            y="52.40"
+            z="0.0"
+            pitch="0"
+            roll="0"
+            yaw="180"
+            route="4"
+        />
+
+
+    </town>
+</towns>

@@ -64,16 +64,14 @@ class HBSScenarioRunner(ScenarioRunner):
         if self._args.sync:
             tm.set_synchronous_mode(True)
 
-        entitiles_file = self._args.entities[0] if self._args.entities else None
 
-        print('entities file:', entitiles_file)
         # Prepare scenario
         try:
             scenario = HBSRouteScenario(world=self.world,
                                         config=config,
-                                        entities_file=entitiles_file,
+                                        entities_files=self._args.entities,
                                         enable_background_activty=(not self._args.noBackgroundActivity),
-                                        scenario_name=self._args.scenarioName,
+                                        scenario_names=self._args.scenarioNames,
                                         debug_mode=self._args.debug)
         except Exception as exception:                  # pylint: disable=broad-except
             print("The scenario cannot be loaded")

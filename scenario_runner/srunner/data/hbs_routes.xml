@@ -60,9 +60,9 @@
             fog_distance="0"
             wetness="0"
         />
-        <waypoint pitch="0.0" roll="0.0" x="172.00" y="133.50" yaw="0.0" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="145.00" y="133.50" yaw="0.0" z="0.0" />
         <waypoint pitch="0.0" roll="0.0" x="199.25" y="133.50" yaw="0.0" z="0.0" />
-        <waypoint pitch="0.0" roll="0.0" x="301.50" y="133.50" yaw="0.0" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="329.10" y="133.50" yaw="0.0" z="0.0" />
     </route>
     <route id="3c" town="Town01">
         <weather 
@@ -76,9 +76,9 @@
             fog_distance="0.75"
             wetness="20"
         />
-        <waypoint pitch="0.0" roll="0.0" x="172.00" y="133.50" yaw="0.0" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="145.00" y="133.50" yaw="0.0" z="0.0" />
         <waypoint pitch="0.0" roll="0.0" x="199.25" y="133.50" yaw="0.0" z="0.0" />
-        <waypoint pitch="0.0" roll="0.0" x="301.50" y="133.50" yaw="0.0" z="0.0" />
+        <waypoint pitch="0.0" roll="0.0" x="329.10" y="133.50" yaw="0.0" z="0.0" />
     </route>    
     <route id="4" town="Town01">
         <weather 
@@ -100,7 +100,7 @@
         <weather 
             cloudiness="30"
             precipitation="80"
-            precipitation_deposits="70"
+            precipitation_deposits="10"
             wind_intensity="100"
             sun_azimuth_angle="-1"
             sun_altitude_angle="15"

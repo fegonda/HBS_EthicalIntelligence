@@ -41,7 +41,22 @@
                         }
                     ],
                     "scenario_type": "Scenario12"
-		        },                
+		        },   
+                {
+                    "available_event_configurations": [
+                        {
+                            "transform": {
+                                "pitch": "0",
+                                "x": "205.10",
+                                "y": "59.80",
+                                "yaw": "0",
+                                "z": "1.0",
+                                "route":"4"
+                            }
+                        }
+                    ],
+                    "scenario_type": "Scenario13"
+		        },                  
                 {
                     "available_event_configurations": [
                         {
@@ -70,8 +85,24 @@
                             }
                         }
                     ],
-                    "scenario_type": "Scenario16"
-		        },                                     
+                    "scenario_type": "Scenario16a"
+		        },   
+                {
+                    "available_event_configurations": [
+                        {
+                            "transform": {
+                                "pitch": "0",
+                                "x": "245.00",
+                                "y": "59.90",
+                                "yaw": "0",
+                                "z": "1.0",
+                                "route":"4"
+                            }
+                        }
+                    ],
+                    "scenario_type": "Scenario17"
+
+                },                                  
                 {
                     "available_event_configurations": [
                         {
@@ -103,7 +134,7 @@
                         {
                             "transform": {
                                 "pitch": "0",
-                                "x": "177.60",
+                                "x": "147.60",
                                 "y": "133.50",
                                 "yaw": "0",
                                 "z": "1.0",
@@ -112,9 +143,22 @@
                         }                   
                     ],
                     "scenario_type": "Scenario15"
-
+                },
+                {
+                    "available_event_configurations": [
+                        {
+                            "transform": {
+                                "pitch": "0",
+                                "x": "147.60",
+                                "y": "133.50",
+                                "yaw": "0",
+                                "z": "1.0",
+                                "route":"3"
+                            }
+                        }                   
+                    ],
+                    "scenario_type": "Scenario16"
                 }
-
 	        ],
             "Town03": [
                 {

@@ -1,5 +1,7 @@
 cd %SCENARIO_RUNNER_ROOT%
-start python run_hbs_experiment.py --title "HBS Social Experiment 3" --route %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_routes.xml  %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_scenarios.json 4  --entities %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_entities.xml --debug --noBackgroundActivity --scenarioName Scenario12
+start python run_hbs_experiment.py --title "HBS AV Experiment 3 - Pedestrian Crossing from Blocker in C;ear Weather" --route %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_routes.xml  %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_scenarios.json 4 --entities %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_entities.xml  %SCENARIO_RUNNER_ROOT%\srunner\data\hbs_vending_machines.xml --noBackgroundActivity --scenarioNames Scenario12
+
+SLEEP 50
 
 CD %CARLA_ROOT%\PythonAPI\examples
 start python DReyeVR_AI.py -n 0
