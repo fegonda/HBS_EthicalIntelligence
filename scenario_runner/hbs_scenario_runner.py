@@ -33,8 +33,10 @@ import pkg_resources
 import carla
 
 from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
-from srunner.scenarios.hbs_route_scenario import HBSRouteScenario
+#from srunner.scenarios.hbs_route_scenario import HBSRouteScenario
 from scenario_runner import ScenarioRunner
+from srunner.hbs.scenarios.route_scenario import HBSRouteScenario
+
 
 class HBSScenarioRunner(ScenarioRunner):
 
