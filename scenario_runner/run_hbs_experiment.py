@@ -120,7 +120,8 @@ def scenario_runner_args(parser):
     parser.add_argument("--repetitions", default=1, type=int)
     parser.add_argument("--waitForEgo", action="store_true")
     parser.add_argument("--outputDir", default="")
-    parser.add_argument("--scenarioNames", nargs="+", type=str)
+    # parser.add_argument("--scenarioNames", nargs="+", type=str)
+    parser.add_argument("--eventNames", nargs="+", type=str)
 
     # arguments we're ignoring
     parser.add_argument("--file", action="store_true")

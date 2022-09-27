@@ -34,7 +34,6 @@ from srunner.tools.py_trees_port import oneshot_behavior
 
 from srunner.scenarios.control_loss import ControlLoss
 from srunner.scenarios.follow_leading_vehicle import FollowLeadingVehicle
-from srunner.scenarios.follow_leading_vehicle import FollowLeadingVehicleWithObstacle
 from srunner.scenarios.object_crash_vehicle import DynamicObjectCrossing
 from srunner.scenarios.object_crash_intersection import VehicleTurningRoute
 from srunner.scenarios.other_leading_vehicle import OtherLeadingVehicle
@@ -66,8 +65,6 @@ NUMBER_CLASS_TRANSLATION = {
     "Scenario9": SignalJunctionCrossingRoute,
     "Scenario10": NoSignalJunctionCrossingRoute
 }
-
-
 
 
 def convert_json_to_transform(actor_dict):
@@ -184,6 +181,7 @@ class RouteScenario(BasicScenario):
         - world: CARLA world
         - config: Scenario configuration (RouteConfiguration)
         """
+
         # Transform the scenario file into a dictionary
         world_annotations = RouteParser.parse_annotations_file(config.scenario_file)
 
@@ -301,7 +299,6 @@ class RouteScenario(BasicScenario):
         sampled_scenarios = []
         for trigger in potential_scenarios_definitions.keys():
             possible_scenarios = potential_scenarios_definitions[trigger]
-            print('<trigger>:', trigger)
 
             scenario_choice = rng.choice(possible_scenarios)
             del possible_scenarios[possible_scenarios.index(scenario_choice)]
@@ -314,7 +311,6 @@ class RouteScenario(BasicScenario):
                 del possible_scenarios[possible_scenarios.index(scenario_choice)]
 
             if scenario_choice is not None:
-                print('<scenario_choice>:', scenario_choice)
                 sampled_scenarios.append(scenario_choice)
 
         return sampled_scenarios
@@ -332,7 +328,8 @@ class RouteScenario(BasicScenario):
                                      scenario['trigger_position']['y'],
                                      scenario['trigger_position']['z']) + carla.Location(z=2.0)
                 world.debug.draw_point(loc, size=0.3, color=carla.Color(255, 0, 0), life_time=100000)
-
+                world.debug.draw_string(loc, str(scenario['name']), draw_shadow=False,
+                                        color=carla.Color(0, 0, 255), life_time=100000, persistent_lines=True)
 
         for scenario_number, definition in enumerate(scenario_definitions):
             # Get the class possibilities for this scenario number
@@ -426,7 +423,7 @@ class RouteScenario(BasicScenario):
             'Town10': 120,
         }
 
-        amount = town_amount[config.town]
+        amount = town_amount[config.town] if config.town in town_amount else 0
 
         new_actors = CarlaDataProvider.request_new_batch_actors('vehicle.*',
                                                                 amount,
@@ -465,12 +462,9 @@ class RouteScenario(BasicScenario):
         scenario_behaviors = []
         blackboard_list = []
 
-        print('==================<creating behavior>======================')
-
         for i, scenario in enumerate(self.list_scenarios):
             if scenario.scenario.behavior is not None:
                 route_var_name = scenario.config.route_var_name
-                print('route_var_name:', route_var_name)
                 if route_var_name is not None:
                     scenario_behaviors.append(scenario.scenario.behavior)
                     blackboard_list.append([scenario.config.route_var_name,
@@ -481,8 +475,6 @@ class RouteScenario(BasicScenario):
                                                      behaviour=scenario.scenario.behavior,
                                                      name=name)
                     scenario_behaviors.append(oneshot_idiom)
-                    print('oneshot behavior:', name, 'at:',  scenario.config.trigger_points[0].location)
-        print('==================</creating behavior>======================')
 
         # Add behavior that manages the scenarios trigger conditions
         scenario_triggerer = ScenarioTriggerer(

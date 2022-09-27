@@ -15,10 +15,14 @@ import py_trees
 import carla
 import random
 
+from srunner.tools.scenario_helper import generate_target_waypoint_list_multilane
 from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
 from srunner.scenariomanager.scenarioatomics.atomic_behaviors import (ActorTransformSetter,
                                                                       ActorDestroy,
                                                                       AccelerateToVelocity,
+                                                                      ChangeAutoPilot,
+                                                                      ChangeEgoSpeed,
+                                                                      DecelerateToStop,
                                                                       HandBrakeVehicle,
                                                                       KeepVelocity,
                                                                       StopVehicle,
@@ -30,7 +34,14 @@ from srunner.scenariomanager.scenarioatomics.atomic_trigger_conditions import (I
                                                                                InTriggerDistanceToLocation,
                                                                                InTriggerDistanceToVehicle,
                                                                                InTriggerDistanceToNextIntersection,
+                                                                               InProximityViewOfActor,
+                                                                               TargetProximityInfo,
+                                                                               TargetsInProximityViewOfActor,
+                                                                               TargetsNotInProximityViewOfActor,
+                                                                               NotInProximityOfActor,
+                                                                               OutsideProximityViewOfStoppedActor,
                                                                                DriveDistance,
+                                                                               WaitUntilClear,
                                                                                StandStill)
 
 
@@ -868,8 +879,1220 @@ class PedestrianCrossingOLD(BasicScenario):
         """
         self.remove_all_actors()
 
+class BaseScenario(BasicScenario):
+    def __init__(self, world, ego_vehicles, config,
+                 randomize=False, debug_mode=False, criteria_enable=True, timeout=60, name="ActorsCrossing"):
+        """
+        Setup all relevant parameters and create scenario
+        """
+        self._wmap = CarlaDataProvider.get_map()
+        self._trigger_location = config.trigger_points[0].location
+        self._reference_waypoint = self._wmap.get_waypoint(self._trigger_location)
+
+        self.timeout = timeout
+        self._ego_end_distance = 20
+        # self._actor_safe_distance = actor_safe_distance
+
+        super(BaseScenario, self).__init__(name,
+                                            ego_vehicles,
+                                            config,
+                                            world,
+                                            debug_mode,
+                                            criteria_enable=criteria_enable)
+
+    def _initialize_actors(self, config):
+        for actor_config in config.other_actors:
+
+            if actor_config.destination_transform and (actor_config.rolename == 'pedestrian' or actor_config.rolename == 'cyclist'):
+                # Orient the actor towards its destination
+                other_actor_destination_dir = actor_config.destination_transform.location - actor_config.transform.location
+                other_actor_destination_dir = other_actor_destination_dir.make_unit_vector()
+                actor_config.transform.rotation.yaw = math.degrees(math.atan2(other_actor_destination_dir.y, other_actor_destination_dir.x)) 
+            
+            # import pdb; pdb.set_trace()
+            actor = CarlaDataProvider.request_new_actor(actor_config.type, actor_config.transform, actor_category=actor_config.rolename)
+            if actor:
+                # actor.set_simulate_physics(enabled=False)
+                actor.speed = actor_config.speed
+                actor.transform = actor_config.transform
+                actor.destination_transform = actor_config.destination_transform
+                actor.destination_radius = actor_config.safety_radius
+                actor.destination_is_waypoint = actor_config.destination_is_waypoint
+                actor.rolename = actor_config.rolename
+                actor.awareness_distance = actor_config.awareness_distance
+                actor.trigger_distance = actor_config.trigger_distance
+                actor.invisible_to_ego = actor_config.invisible_to_ego
+                self.other_actors.append( actor )
+                # import pdb; pdb.set_trace()
+                # if actor.rolename == 'vehicle':
+                #     self._vehicles.append( actor )
+
+                if actor.rolename == 'vehicle' or actor.rolename == 'cyclist':
+                    actor.set_simulate_physics(enabled=True)
+
+
+    def get_actors(self, rolenames):
+        actors = []
+        for i, actor in enumerate(self.other_actors):
+            if actor.rolename in rolenames:
+                actors.append(actor)
+        return actors
+
+    def _create_cyclists_crossing_behavior(self, behavior_parent):
+
+        cyclists = self.get_actors( ['cyclist'] )
+        if len(cyclists) == 0:
+            return
+
+        behavior = py_trees.composites.Parallel("Cyclists Crossing Behavior",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        for i, actor in enumerate(cyclists):
+            crossing_distance = actor.transform.location.distance( actor.destination_transform.location )
+
+            # Move the pedestrian
+            crossing_duration = crossing_distance / actor.speed
+            speed_duration = crossing_duration
+            speed_distance = crossing_distance
+
+            actor_behavior = py_trees.composites.Sequence()
+            if actor.trigger_distance > 0:
+                actor_behavior.add_child(InTriggerDistanceToVehicle(self.ego_vehicles[0],actor, actor.trigger_distance))
+
+            drive_behavior = py_trees.composites.Parallel("Cylist Crossing",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+            drive_behavior.add_child(KeepVelocity(
+                actor, 
+                actor.speed,
+                # duration=speed_duration, 
+                # distance=speed_distance#, 
+                name="Cyclist " + str(i) + " crossing"
+            ))
+
+            drive_behavior.add_child(InTriggerDistanceToLocation(
+                actor,
+                actor.destination_transform.location,
+                actor.destination_radius,
+                name="Cyclist " + str(i) + ' reached destination'))
+
+            actor_behavior.add_child(drive_behavior)
+
+            if actor.destination_is_waypoint:
+                # actor_behavior.add_child(TimeOut(3))
+                actor_behavior.add_child(WaypointFollower(actor, actor.speed))
+            else:
+                actor_behavior.add_child(HandBrakeVehicle(actor, True))
+            behavior.add_child(actor_behavior)
+
+
+        behavior_parent.add_child(behavior)
+
+    def _create_pedestrians_crossing_behavior(self, behavior_parent):
+        pedestrians = self.get_actors( ['pedestrian'] )
+        if len(pedestrians) == 0:
+            return
+
+        behavior = py_trees.composites.Parallel("Pedestrians Crossing",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        for i, actor in enumerate(pedestrians):
+            crossing_distance = actor.transform.location.distance( actor.destination_transform.location )
+
+            # Move the pedestrian
+            crossing_duration = crossing_distance / actor.speed
+            speed_duration = crossing_duration
+            speed_distance = crossing_distance
+
+            actor_behavior = py_trees.composites.Sequence()
+
+            if actor.trigger_distance > 0:
+                actor_behavior.add_child(InTriggerDistanceToVehicle(self.ego_vehicles[0],actor, actor.trigger_distance))
+            
+            # import pdb; pdb.set_trace()
+
+            cross_behavior = py_trees.composites.Parallel("Pedestrian Crossing",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+            cross_behavior.add_child(KeepVelocity(
+                actor, 
+                actor.speed,
+                # duration=speed_duration, 
+                # distance=speed_distance, 
+                name="Pedestrian " + str(i) + " crossing"))
+
+            cross_behavior.add_child(InTriggerDistanceToLocation(
+                actor,
+                actor.destination_transform.location,
+                actor.destination_radius,
+                name="Pedestrian " + str(i) + ' reached destination'))
+
+            actor_behavior.add_child(cross_behavior)
+            behavior.add_child(actor_behavior)
+
+        behavior_parent.add_child(behavior)
+
+    def _create_ego_behavior(self, behavior_parent):
+        ego_yield_conditions = py_trees.composites.Parallel("Yield conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        ego_stop_conditions = py_trees.composites.Parallel("Stop conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        ego_resume_conditions = py_trees.composites.Parallel("Resume conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+
+        for i, actor in enumerate(self.other_actors):
+            if actor.rolename == 'pedestrian' or actor.rolename == 'cyclist':
+                ego_yield_conditions.add_child(InProximityViewOfActor(
+                    actor=self.ego_vehicles[0],
+                    target=actor,
+                    distance=actor.awareness_distance*1.5,
+                    view_angle=0.0,
+                    name="Yield for pedestrian " + str(i) + " condition"
+                ))
+
+                ego_stop_conditions.add_child(InProximityViewOfActor(
+                    actor=self.ego_vehicles[0],
+                    target=actor,
+                    distance=actor.awareness_distance*0.75,
+                    view_angle=0.0,
+                    name="Stop for pedestrian " + str(i) + " condition"
+                ))
+
+                ego_resume_conditions.add_child(InTriggerDistanceToLocation(
+                        actor,
+                        actor.destination_transform.location,
+                        actor.destination_radius*1.0,
+                        name="Pedestrian " + str(i) + ' crossed street'))
+
+        ego_speed_limit = self.ego_vehicles[0].get_speed_limit()
+        ego_behavior = py_trees.composites.Sequence(name="Ego behavior")
+
+        yield_params = {}
+        yield_params["max_speed"] = ego_speed_limit*0.75
+        ego_yield = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=yield_params, name="Yyield to pedestrians")
+        ego_yield_behavior = py_trees.composites.Sequence(name= "Yield")
+        ego_behavior.add_child(ego_yield_conditions)
+        ego_behavior.add_child(ego_yield)
+
+        stop_params = {}
+        stop_params["max_speed"] = 0
+        ego_stop = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=stop_params, name="Stop for pedestrians")
+        ego_stop_behavior = py_trees.composites.Sequence(name="Stop")
+        ego_behavior.add_child(ego_stop_conditions)
+        ego_behavior.add_child(ego_stop)
+        
+        resume_params = {}
+        resume_params["max_speed"] = ego_speed_limit
+        ego_resume = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=resume_params, name="Resume navigation")
+        ego_resume_behavior = py_trees.composites.Sequence(name="Resume")
+        ego_behavior.add_child(ego_resume_conditions)
+        ego_behavior.add_child(ego_resume)
+
+        behavior_parent.add_child(ego_behavior)
+ 
+
+    def _create_test_criteria(self):
+        """
+        A list of all test criteria will be created that is later used
+        in parallel behavior tree.
+        """
+        criteria = []
+        collision_criterion = CollisionTest(self.ego_vehicles[0])
+        criteria.append(collision_criterion)
+        return criteria
+
+    def __del__(self):
+        """
+        Remove all actors upon deletion
+        """
+        self.remove_all_actors()   
+
+
+class PedestriansCrossing(BaseScenario):
+    def __init__(self, world, ego_vehicles, config,
+                 randomize=False, debug_mode=False, criteria_enable=True, timeout=60, name="PedestriansCrossing"):
+        """
+        Setup all relevant parameters and create scenario
+        """
+        super(PedestriansCrossing, self).__init__(  world,
+                                                    ego_vehicles,
+                                                    config,
+                                                    name=name,
+                                                    timeout=timeout,
+                                                    debug_mode=debug_mode,
+                                                    criteria_enable=criteria_enable)
+
+    def _create_behavior(self):
+        parallel_root = py_trees.composites.Parallel("Pedestrians Crossing Behaviors",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        # parallel_root.add_child( self._create_ego_behavior() )
+        # parallel_root.add_child( self._create_pedestrians_crossing_behavior() )
+
+        self._create_ego_behavior(parallel_root)
+        self._create_ego_behavior(parallel_root)
+
+        sequence = py_trees.composites.Sequence(name="Pedestrian Crossing Scenario")
+        sequence.add_child(parallel_root)
+        sequence.add_child(DriveDistance(self.ego_vehicles[0], self._ego_end_distance, name="EndCondition"))
+        sequence.add_child(StandStill(self.ego_vehicles[0], name="wait speed", duration=1))
+        for i, actor in enumerate(self.other_actors):
+            sequence.add_child(ActorDestroy(actor, name="DestroyActor" + str(i)))
+        return sequence
+
+class PedestriansCrossingOtherVehiclesYield(PedestriansCrossing):
+
+    def __init__(self, world, ego_vehicles, config,
+                randomize=False, debug_mode=False, criteria_enable=True, timeout=60, name="PedestriansCrossingOtherVehiclesYield"):
+        """
+        Setup all relevant parameters and create scenario
+        """
+        # self._ego_end_distance = 20
+        # self._pedestrians_distance = 30
+        super(PedestriansCrossingOtherVehiclesYield, self).__init__(
+                                            world,
+                                            ego_vehicles,
+                                            config,
+                                            name=name,
+                                            timeout=timeout,
+                                            debug_mode=debug_mode,
+                                            criteria_enable=criteria_enable)
+
+    def _find_other_vehicle(self):
+        vehicle = None
+        for actor in self.other_actors:
+            if actor.rolename == 'vehicle':
+                vehicle = actor
+                break
+        return vehicle
+
+    def _create_other_vehicle_behavior(self, behavior_parent):
+        vehicle = self._find_other_vehicle()
+        if not vehicle:
+            return
+
+        other_vehicle_behavior = py_trees.composites.Sequence("Other Vehicle Behavior")
+
+        stop_conditions = py_trees.composites.Parallel("Resume other vehicle",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        resume_conditions = py_trees.composites.Parallel("Resume other vehicle",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        for i, actor in enumerate(self.other_actors):
+            if actor.rolename != 'pedestrian': continue                
+            resume_conditions.add_child(InTriggerDistanceToLocation(
+                actor, 
+                actor.destination_transform.location, 
+                actor.destination_radius,
+                name="Resume other vehicle condition - " + str(i)))
+            stop_conditions.add_child(InProximityViewOfActor(
+                actor=vehicle,
+                target=actor,
+                distance=actor.awareness_distance*0.7,
+                view_angle=0.0,
+                name="Stop for pedestrian " + str(i) + " condition"
+            ))
+
+        driving_to_next_intersection = py_trees.composites.Parallel("Driving towards Intersection", policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        driving_to_next_intersection.add_child(WaypointFollower(vehicle, vehicle.speed))
+        driving_to_next_intersection.add_child(stop_conditions)
+        # driving_to_next_intersection.add_child(InTriggerDistanceToLocation(
+        #     vehicle,
+        #     vehicle.destination_transform.location,
+        #     vehicle.destination_radius,
+        #     name="Other vehicle yield condition"))
+        other_vehicle_behavior.add_child(driving_to_next_intersection)
+        other_vehicle_behavior.add_child(StopVehicle(actor, 1))
+        other_vehicle_behavior.add_child(resume_conditions)
+        other_vehicle_behavior.add_child(WaypointFollower(vehicle, vehicle.speed))
+
+        behavior_parent.add_child(other_vehicle_behavior)
+
+
+    def _create_behavior(self):
+        parallel_root = py_trees.composites.Parallel("Pedestrians Crossing Behaviors",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        # parallel_root.add_child( self._create_other_vehicle_behavior( ) )
+        # parallel_root.add_child( self._create_ego_behavior() )
+        # parallel_root.add_child( self._create_pedestrians_crossing_behavior() )
+        self._create_other_vehicle_behavior(parallel_root)
+        self._create_ego_behavior(parallel_root)
+        self._create_pedestrians_crossing_behavior(parallel_root)
+
+        sequence = py_trees.composites.Sequence(name="Pedestrian Crossing Scenario")
+        sequence.add_child(parallel_root)
+        sequence.add_child(DriveDistance(self.ego_vehicles[0], self._ego_end_distance, name="EndCondition"))
+        sequence.add_child(StandStill(self.ego_vehicles[0], name="wait speed", duration=1))
+        for i, actor in enumerate(self.other_actors):
+            sequence.add_child(ActorDestroy(actor, name="DestroyActor" + str(i)))
+        return sequence
+
+
+class FollowVehicle(BaseScenario):
+    def __init__(self, world, ego_vehicles, config,
+                 randomize=False, debug_mode=False, criteria_enable=True, timeout=1000, name="FollowVehicle"):
+        """
+        Setup all relevant parameters and create scenario
+        """
+        super(FollowVehicle, self).__init__(world,
+                                            ego_vehicles,
+                                            config,
+                                            name=name,
+                                            timeout=timeout,
+                                            debug_mode=debug_mode,
+                                            criteria_enable=criteria_enable)
+
+
+    def _find_leading_vehicle(self):
+        vehicle = None
+        for actor in self.other_actors:
+            if actor.rolename == 'vehicle':
+                vehicle = actor
+                break
+        return vehicle
+
+    def _create_leading_vehicle_behavior(self, behavior_parent):
+        # find the first vehicle actor
+        vehicle = self._find_leading_vehicle()
+
+        if not vehicle:
+            return
+
+        actors = [] #self.get_actors( ['pedestrian', 'cyclist'] )
+        for actor in self.other_actors:
+            if (actor.rolename == 'pedestrian' or actor.rolename == 'cyclist') and actor.trigger_distance == 0:
+                actors.append( actor)
+
+        other_vehicle_behavior = py_trees.composites.Sequence("Other Vehicle Behavior")
+
+        targets = []
+        stop_targets = []
+        yield_targets = []
+        if len(actors) > 0:
+            stop_conditions = py_trees.composites.Parallel("Stop conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+            # resume_conditions = py_trees.composites.Parallel("Resume conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+            for i, actor in enumerate(actors):
+                # resume_conditions.add_child(InTriggerDistanceToLocation(
+                #     actor, 
+                #     actor.destination_transform.location, 
+                #     actor.destination_radius*3,
+                #     name="Resume other vehicle condition - " + str(i)))
+
+                targets.append(TargetProximityInfo(actor,actor.awareness_distance*0.5))
+
+                stop_targets.append(TargetProximityInfo(
+                    actor, 
+                    actor.awareness_distance*0.5,
+                    success_on_move=False,
+                    success_on_stopped=False ))
+                yield_targets.append(TargetProximityInfo(
+                    actor, 
+                    actor.awareness_distance*0.5,
+                    success_on_move=False,
+                    success_on_stopped=False ))                
+
+                # stop_conditions.add_child(InProximityViewOfActor(
+                #     actor=vehicle,
+                #     target=actor,
+                #     distance=actor.awareness_distance*0.5,
+                #     view_angle=0.0,
+                #     name="Stop for " + actor.rolename + " " + str(i) + " condition"
+                # ))
+
+
+            # stop_conditions.add_child(InTriggerDistanceToLocation(
+            #     vehicle, 
+            #     vehicle.destination_transform.location, 
+            #     vehicle.destination_radius,
+            #     name="Stop at destination"))
+            # stop_conditions.add_child(TargetsInProximityViewOfActor(
+            #     actor=vehicle,
+            #     targets=stop_targets
+            #     # distance=vehicle.awareness_distance,
+            #     # name="other Stop for pedestrians condition"
+            # ))  
+
+            drive_to_event = py_trees.composites.Parallel("Driving to event", policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+            drive_to_event.add_child(WaypointFollower(vehicle, vehicle.speed))
+            drive_to_event.add_child(TargetsInProximityViewOfActor(actor=vehicle, targets=stop_targets))
+
+            other_vehicle_behavior.add_child(drive_to_event)
+            other_vehicle_behavior.add_child(StopVehicle(vehicle, 1))
+            #other_vehicle_behavior.add_child(resume_conditions)
+            other_vehicle_behavior.add_child(TargetsNotInProximityViewOfActor(
+                actor=vehicle,
+                targets=yield_targets,
+                success_on_all=True#,
+                # distance=vehicle.awareness_distance,
+                # name="other Yield condition"
+            ))                
+
+        drive_to_next_intersection = py_trees.composites.Parallel("Driving to next ontersection", policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        drive_to_next_intersection.add_child(WaypointFollower(vehicle, vehicle.speed))
+        drive_to_next_intersection.add_child(InTriggerDistanceToLocation(
+            vehicle, 
+            vehicle.destination_transform.location, 
+            vehicle.destination_radius
+        ))
+
+        other_vehicle_behavior.add_child(drive_to_next_intersection)
+        # other_vehicle_behavior.add_child(StopVehicle(vehicle, 1))
+        other_vehicle_behavior.add_child(HandBrakeVehicle(vehicle, True))
+
+        behavior_parent.add_child(other_vehicle_behavior)
+
+    # def _create_end_condition(self, behavior_parent):
+    #     vehicle = self._find_leading_vehicle()
+    #     if vehicle:
+    #         behavior_parent.add_child(InTriggerDistanceToLocation(
+    #             vehicle, 
+    #             vehicle.destination_transform.location, 
+    #             vehicle.destination_radius
+    #         ))
+
+    def _create_ego_behavior(self, behavior_parent):
+        vehicle = self._find_leading_vehicle()
+
+        stop_for_actors = []
+        yield_for_actors = []
+
+        if vehicle:
+            stop_for_actors.append(TargetProximityInfo(vehicle,vehicle.awareness_distance*0.5))
+            yield_for_actors.append(TargetProximityInfo(vehicle,vehicle.awareness_distance*0.5))
+
+        for actor in self.other_actors:
+            if actor.invisible_to_ego:
+                continue
+            if actor != vehicle and actor.awareness_distance > 0:
+                stop_target_info = TargetProximityInfo(
+                    actor, 
+                    actor.awareness_distance*0.5,
+                    success_on_move=False,
+                    success_on_stopped=False )
+                yield_target_info = TargetProximityInfo(
+                    actor, 
+                    actor.awareness_distance*0.5,
+                    success_on_move=False,
+                    success_on_stopped=False )
+                stop_for_actors.append( stop_target_info )
+                yield_for_actors.append( yield_target_info )
+
+        # import pdb; pdb.set_trace()
+        if len(stop_for_actors) == 0:
+            return
+            
+        ego_yield_conditions = py_trees.composites.Parallel("Yield conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        ego_stop_conditions = py_trees.composites.Parallel("Stop conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        # ego_resume_conditions = py_trees.composites.Parallel("Resume conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+
+        ego_yield_conditions.add_child(TargetsNotInProximityViewOfActor(
+            actor=self.ego_vehicles[0],
+            targets=yield_for_actors,#[TargetProximityInfo(vehicle,vehicle.awareness_distance)],
+            success_on_all=True,
+            # distance=vehicle.awareness_distance,
+            name="ego Yield condition"
+        ))
+
+        ego_stop_conditions.add_child(TargetsInProximityViewOfActor(
+            actor=self.ego_vehicles[0],
+            targets=stop_for_actors,
+            # distance=vehicle.awareness_distance*0.5,
+            name="ego Stop condition"
+        ))
+
+        # ego_yield_conditions.add_child(InProximityViewOfActor(
+        #     actor=self.ego_vehicles[0],
+        #     target=vehicle,
+        #     distance=vehicle.awareness_distance,
+        #     view_angle=0.0,
+        #     name="Yield for leading vehicle condition"
+        # ))
+
+        # ego_stop_conditions.add_child(InProximityViewOfActor(
+        #     actor=self.ego_vehicles[0],
+        #     target=vehicle,
+        #     distance=vehicle.awareness_distance*0.5,
+        #     view_angle=0.0,
+        #     name="Stop for leading vehicle condition"
+        # ))
+
+        # ego_resume_conditions.add_child(NotInProximityOfActor(
+        #     actor=self.ego_vehicles[0],
+        #     target=vehicle,
+        #     distance=vehicle.awareness_distance,
+        #     name="Resume speed condition"
+        # ))        
+
+        # ego_resume_conditions.add_child(InTriggerDistanceToLocation(
+        #         actor,
+        #         actor.destination_transform.location,
+        #         actor.destination_radius*1.0,
+        #         name="Pedestrian " + str(i) + ' crossed street'))
+
+        ego_speed_limit = self.ego_vehicles[0].get_speed_limit()
+        ego_behavior = py_trees.composites.Sequence(name="Ego behavior")
+
+
+        stop_params = {}
+        stop_params["max_speed"] = 0
+        # stop_params["distance_between_vehicles"] = 0
+        ego_stop = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=stop_params, name="Stop for leading vehicle")
+        ego_stop_behavior = py_trees.composites.Sequence(name="Stop")
+        ego_behavior.add_child(ego_stop_conditions)
+        ego_behavior.add_child(ego_stop)
+
+        yield_params = {}
+        yield_params["max_speed"] = ego_speed_limit
+        # yield_params["distance_between_vehicles"] = 2
+
+        ego_yield = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=yield_params, name="Yield to leading vehicle")
+        ego_yield_behavior = py_trees.composites.Sequence(name= "Yield")
+        ego_behavior.add_child(ego_yield_conditions)
+        ego_behavior.add_child(ego_yield)
+
+        # resume_params = {}
+        # resume_params["max_speed"] = ego_speed_limit
+        # ego_resume = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=resume_params, name="Resume navigation")
+        # ego_resume_behavior = py_trees.composites.Sequence(name="Resume")
+        # ego_behavior.add_child(ego_resume_conditions)
+        # ego_behavior.add_child(ego_resume)
+
+        behavior_parent.add_child(ego_behavior)
+
+    def _create_behavior(self):
+        parallel_root = py_trees.composites.Parallel("Follow leading vehicle behavior",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        # parallel_root.add_child( self._create_leading_vehicle_behavior( ) )
+        # parallel_root.add_child( self._create_ego_behavior() )
+        # parallel_root.add_child( self._create_pedestrians_crossing_behavior() )
+        # parallel_root.add_child( self._create_cyclists_crossing_behavior() )
+
+        self._create_pedestrians_crossing_behavior( parallel_root ) 
+        self._create_cyclists_crossing_behavior( parallel_root ) 
+        self._create_leading_vehicle_behavior( parallel_root ) 
+        self._create_ego_behavior( parallel_root ) 
+
+        params = {}
+        params["distance_between_vehicles"] = 2
+        params["max_speed"] = 0
+
+        sequence = py_trees.composites.Sequence(name="Pedestrian Crossing Scenario")
+        sequence.add_child(parallel_root)
+        sequence.add_child(DriveDistance(self.ego_vehicles[0], self._ego_end_distance, name="EndCondition"))
+        sequence.add_child(StandStill(self.ego_vehicles[0], name="wait speed", duration=1))
+
+        for i, actor in enumerate(self.other_actors):
+            sequence.add_child(ActorDestroy(actor, name="DestroyActor" + str(i)))
+        return sequence
+
+    def _create_test_criteria(self):
+        """
+        A list of all test criteria will be created that is later used
+        in parallel behavior tree.
+        """
+        criteria = []
+
+        collision_criterion = CollisionTest(self.ego_vehicles[0])
+        criteria.append(collision_criterion)
+
+        return criteria
+
+    def __del__(self):
+        """
+        Remove all actors upon deletion
+        """
+        self.remove_all_actors()   
+
+
 
 class CrowdCrossing(BasicScenario):
+    def __init__(self, world, ego_vehicles, config,
+                 randomize=False, debug_mode=False, criteria_enable=True, timeout=60):
+        """
+        Setup all relevant parameters and create scenario
+        """
+        self.timeout = timeout
+        self._vehicles = []
+        self._ego_end_distance = 20
+        self._ego_safety_distance = 30
+        
+        super(CrowdCrossing, self).__init__("CrowdCrossing",
+                                                    ego_vehicles,
+                                                    config,
+                                                    world,
+                                                    debug_mode,
+                                                    criteria_enable=criteria_enable)
+
+
+    def _initialize_actors(self, config):
+        for actor_config in config.other_actors:
+            other_actor_destination_dir = actor_config.destination_transform.location - actor_config.transform.location
+            other_actor_destination_dir = other_actor_destination_dir.make_unit_vector()
+            actor_config.transform.rotation.yaw = math.degrees(math.atan2(other_actor_destination_dir.y, other_actor_destination_dir.x)) 
+            
+            actor = CarlaDataProvider.request_new_actor(actor_config.type, actor_config.transform, actor_category=actor_config.rolename)
+            if actor:
+                # actor.set_simulate_physics(enabled=False)
+                actor.speed = actor_config.speed
+                actor.transform = actor_config.transform
+                actor.destination_transform = actor_config.destination_transform
+                actor.destination_radius = actor_config.safety_radius
+                actor.rolename = actor_config.rolename
+                self.other_actors.append( actor )
+                if actor.rolename == 'vehicle':
+                    self._vehicles.append( actor )
+
+    def _create_behavior(self):
+        pedestrians_behavior = py_trees.composites.Parallel("Pedestrians Crossing",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        ego_yield_conditions = py_trees.composites.Parallel("Ego yield conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        ego_stop_conditions = py_trees.composites.Parallel("Ego stop conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        ego_resume_conditions = py_trees.composites.Parallel("Ego resume navigation conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+
+        for i, pedestrian in enumerate(self.other_actors):
+
+            if pedestrian.rolename != 'pedestrian':
+                continue
+
+            crossing_distance = pedestrian.transform.location.distance( pedestrian.destination_transform.location )
+
+            # Move the pedestrian
+            crossing_duration = crossing_distance / pedestrian.speed
+            speed_duration = crossing_duration
+            speed_distance = crossing_distance
+
+            pedestrians_behavior.add_child(KeepVelocity(
+                pedestrian, 
+                pedestrian.speed,
+                duration=speed_duration, 
+                distance=speed_distance, 
+                name="Pedestrian " + str(i) + " crossing"))
+
+            ego_yield_conditions.add_child(InProximityViewOfActor(
+                actor=self.ego_vehicles[0],
+                target=pedestrian,
+                distance=self._ego_safety_distance,
+                view_angle=0.7,
+                name="Is pedestrian " + str(i) + " in ego's caution zone"
+            ))
+
+            ego_stop_conditions.add_child(InProximityViewOfActor(
+                actor=self.ego_vehicles[0],
+                target=pedestrian,
+                distance=self._ego_safety_distance*0.5,
+                name="Is pedestrian " + str(i) + " in ego's danger zone"
+            ))
+
+            ego_resume_conditions.add_child(OutsideProximityViewOfStoppedActor(
+                actor=self.ego_vehicles[0],
+                target=pedestrian,
+                distance=self._ego_safety_distance*1.0,
+                view_limits_angle=0.9,
+                name="Is pedestrian " + str(i) + " in ego's safe zone"
+            ))
+
+        ego_speed_limit = self.ego_vehicles[0].get_speed_limit()
+
+        yield_params = {}
+        yield_params["max_speed"] = ego_speed_limit*0.75
+        ego_yield = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=yield_params, name="Ego yields to pedestrians")
+        ego_yield_behavior = py_trees.composites.Sequence()
+        ego_yield_behavior.add_child(ego_yield_conditions)
+        ego_yield_behavior.add_child(ego_yield)
+
+        stop_params = {}
+        stop_params["max_speed"] = 0
+        ego_stop = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=stop_params, name="Ego stops for pedestrians")
+        ego_stop_behavior = py_trees.composites.Sequence()
+        ego_stop_behavior.add_child(ego_stop_conditions)
+        ego_stop_behavior.add_child(ego_stop)
+        
+        resume_params = {}
+        resume_params["max_speed"] = ego_speed_limit
+        ego_resume = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=resume_params, name="Ego resumes navigation")
+        ego_resume_behavior = py_trees.composites.Sequence()
+        ego_resume_behavior.add_child(ego_resume_conditions)
+        ego_resume_behavior.add_child(ego_resume)
+
+        ego_behavior = py_trees.composites.Sequence()
+        ego_behavior.add_child(ego_yield_behavior)
+        ego_behavior.add_child(ego_stop_behavior)
+        ego_behavior.add_child(ego_resume_behavior)
+
+        parallel_root = py_trees.composites.Parallel("Pedestrians Crossing Events",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        parallel_root.add_child(ego_behavior)
+        parallel_root.add_child(pedestrians_behavior)
+
+        sequence = py_trees.composites.Sequence()
+        sequence.add_child(parallel_root)
+        sequence.add_child(DriveDistance(self.ego_vehicles[0], self._ego_end_distance, name="EndCondition"))
+        sequence.add_child(StandStill(self.ego_vehicles[0], name="wait speed", duration=1))
+        for i, actor in enumerate(self.other_actors):
+            sequence.add_child(ActorDestroy(actor, name="DestroyActor" + str(i)))
+
+        return sequence
+
+
+    def _create_behaviora(self):
+
+        pedestrians_crossing_behavior = py_trees.composites.Parallel("Pedestrians Crossing",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        ego_yield_conditions = py_trees.composites.Parallel("Ego yield conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        ego_stop_conditions = py_trees.composites.Parallel("Ego stop conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        ego_resume_conditions = py_trees.composites.Parallel("Ego resume navigation conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+
+        for i, pedestrian in enumerate(self.other_actors):
+
+            if pedestrian.rolename != 'pedestrian':
+                continue
+
+            collision_wp = self._wmap.get_waypoint(pedestrian.transform.location)
+            collision_location = collision_wp.transform.location
+
+            crossing_distance = pedestrian.transform.location.distance( pedestrian.destination_transform.location )
+
+            # Move the pedestrian
+            crossing_duration = crossing_distance / pedestrian.speed
+            speed_duration = crossing_duration
+            speed_distance = crossing_distance
+
+            pedestrians_crossing_behavior.add_child(KeepVelocity(
+                pedestrian, 
+                pedestrian.speed,
+                duration=speed_duration, 
+                distance=speed_distance, 
+                name="Pedestrian " + str(i) + " crossing"))
+
+            ego_yield_conditions.add_child(InProximityViewOfActor(
+                actor=self.ego_vehicles[0],
+                target=pedestrian,
+                distance=self._ego_safety_distance,
+                name="Is pedestrian " + str(i) + " in ego's caution zone"
+            ))
+
+            ego_stop_conditions.add_child(InProximityViewOfActor(
+                actor=self.ego_vehicles[0],
+                target=pedestrian,
+                distance=self._ego_safety_distance*0.5,
+                name="Is pedestrian " + str(i) + " in ego's danger zone"
+            ))
+
+            #OutsideProximityViewOfStoppedActor
+
+            # ego_resume_conditions.add_child(InTriggerDistanceToLocation(
+            #     pedestrian, 
+            #     pedestrian.destination_transform.location, 
+            #     pedestrian.destination_radius,
+            #     name="Is pedestrian " + str(i) + " in ego's safe zone"
+            # ))
+
+            ego_resume_conditions.add_child(OutsideProximityViewOfStoppedActor(
+                actor=self.ego_vehicles[0],
+                target=pedestrian,
+                distance=self._ego_safety_distance*0.5,
+                name="Is pedestrian " + str(i) + " in ego's safe zone"
+            ))
+
+        ego_speed_limit = self.ego_vehicles[0].get_speed_limit()
+
+        yield_params = {}
+        yield_params["max_speed"] = ego_speed_limit*0.75
+        ego_yield = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=yield_params, name="Ego yields to pedestrians")
+        ego_yield_behavior = py_trees.composites.Sequence()
+        ego_yield_behavior.add_child(ego_yield_conditions)
+        ego_yield_behavior.add_child(ego_yield)
+
+        stop_params = {}
+        stop_params["max_speed"] = 0
+        ego_stop = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=stop_params, name="Ego stops for pedestrians")
+        ego_stop_behavior = py_trees.composites.Sequence()
+        ego_stop_behavior.add_child(ego_stop_conditions)
+        ego_stop_behavior.add_child(ego_stop)
+        
+        resume_params = {}
+        resume_params["max_speed"] = ego_speed_limit
+        ego_resume = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=resume_params, name="Ego resumes navigation")
+        ego_resume_behavior = py_trees.composites.Sequence()
+        ego_resume_behavior.add_child(ego_resume_conditions)
+        ego_resume_behavior.add_child(ego_resume)
+
+        parallel_root = py_trees.composites.Parallel("Pedestrians Crossing Events",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        # parallel_root.add_child(ego_yield_behavior)
+        parallel_root.add_child(ego_stop_behavior)
+        parallel_root.add_child(ego_resume_behavior)
+        parallel_root.add_child(pedestrians_crossing_behavior)
+
+        sequence = py_trees.composites.Sequence()
+        sequence.add_child(ego_yield_behavior)
+        sequence.add_child(parallel_root)
+        sequence.add_child(DriveDistance(self.ego_vehicles[0], self._ego_end_distance, name="EndCondition"))
+        sequence.add_child(StandStill(self.ego_vehicles[0], name="wait speed", duration=1))
+        for i, actor in enumerate(self.other_actors):
+            sequence.add_child(ActorDestroy(actor, name="DestroyActor" + str(i)))
+
+        return sequence
+
+    def _create_test_criteria(self):
+        """
+        A list of all test criteria will be created that is later used
+        in parallel behavior tree.
+        """
+        criteria = []
+
+        collision_criterion = CollisionTest(self.ego_vehicles[0])
+        criteria.append(collision_criterion)
+
+        return criteria
+
+    def __del__(self):
+        """
+        Remove all actors upon deletion
+        """
+        self.remove_all_actors()   
+
+
+class CrowdCrossing_newold(BasicScenario):
+    def __init__(self, world, ego_vehicles, config,
+                 randomize=False, debug_mode=False, criteria_enable=True, timeout=60):
+        """
+        Setup all relevant parameters and create scenario
+        """
+        self.timeout = timeout
+        self._wmap = CarlaDataProvider.get_map()
+        self._trigger_location = config.trigger_points[0].location
+        self._reference_waypoint = self._wmap.get_waypoint(self._trigger_location)
+        self._vehicles = []
+        self._pedestrians = []
+        self._pedestrian_reached_distanced = 3
+        self._trigger_distance = 20
+
+        self._ego_caution_distance = 30
+        self._ego_danger_distnace = 20
+        self._ego_end_distance = 20
+        
+        
+        
+        super(CrowdCrossing, self).__init__("CrowdCrossing",
+                                                    ego_vehicles,
+                                                    config,
+                                                    world,
+                                                    debug_mode,
+                                                    criteria_enable=criteria_enable)
+
+
+    def _initialize_actors(self, config):
+        for other_actor in config.other_actors:
+            actor = CarlaDataProvider.request_new_actor(other_actor.type, other_actor.transform, actor_category=other_actor.rolename)
+            if actor:
+                # actor.set_simulate_physics(enabled=False)
+                actor.speed = other_actor.speed
+                actor.transform = other_actor.transform
+                actor.destination_transform = other_actor.destination_transform
+                actor.destination_radius = other_actor.safety_radius
+                actor.rolename = other_actor.rolename
+                self.other_actors.append( actor )
+                if actor.rolename == 'vehicle':
+                    self._vehicles.append( actor )
+
+
+    def _create_behavior(self):
+        """
+        After invoking this scenario, cyclist will wait for the user
+        controlled vehicle to enter trigger distance region,
+        the cyclist starts crossing the road once the condition meets,
+        then after 60 seconds, a timeout stops the scenario
+        """        
+        stop_ego_vehicle = None
+        stop_ego_vehicle_distance = 0
+        resume_ego_vehicle = py_trees.composites.Parallel("Resume ego vehicle speed conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        pedestrians_crossing_street = py_trees.composites.Parallel("Pedestrians Crossing",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+
+        for i, actor in enumerate(self.other_actors):
+
+            if actor.rolename != 'pedestrian':
+                continue
+
+            collision_wp = self._wmap.get_waypoint(actor.transform.location)
+            collision_location = collision_wp.transform.location
+            # collision_distance = actor.transform.location.distance( actor.destination_transform.location )
+
+            crossing_distance = actor.transform.location.distance( actor.destination_transform.location )
+
+            # Move the pedestrian
+            #collision_distance = actor.crossing_distance #self._crossing_distance
+            # collision_duration = collision_distance / self._pedestrian_speed
+            crossing_duration = crossing_distance / actor.speed
+            speed_duration = crossing_duration
+            speed_distance = crossing_distance
+
+            pedestrian_crossing = py_trees.composites.Sequence("Pedestrian" + str(i))
+            # pedestrian_crossing.add_child(InTriggerDistanceToVehicle(actor,self.ego_vehicles[0], 20))
+
+            pedestrian_crossing.add_child(KeepVelocity(
+                actor, 
+                actor.speed,
+                # self._pedestrian_speed,
+                duration=speed_duration, 
+                distance=speed_distance, 
+                name="Pedestrian" + str(i) + "Crossing"))
+
+            pedestrians_crossing_street.add_child( pedestrian_crossing )
+
+            # stop_ego_vehicle.add_child(InTriggerDistanceToVehicle(
+            #     actor,
+            #     self.ego_vehicles[0], 
+            #     self._safety_distance, 
+            #     name="Stop ego vehicle condition - " + str(i)))
+
+            
+
+            dist = self._trigger_location.distance( collision_location )
+            if (stop_ego_vehicle == None) or (stop_ego_vehicle and dist < stop_ego_vehicle_distance):
+                stop_ego_vehicle_distance = dist
+                stop_ego_vehicle = InTriggerDistanceToLocation(
+                self.ego_vehicles[0], 
+                collision_location, 
+                self._trigger_distance,
+                name="Stop ego vehicle condition")
+
+
+            # stop_ego_vehicle.add_child(InTriggerDistanceToLocation(
+            #     self.ego_vehicles[0], 
+            #     collision_location, 
+            #     self._safety_distance,
+            #     name="Stop ego vehicle condition - " + str(i)))
+
+            # stop_ego_vehicle.add_child( DriveDistance(self.other_actors[0], actor.crossing_distance*0.10, name="Pedestrian start crossing") )
+            # resume_ego_vehicle.add_child( DriveDistance(self.other_actors[0], actor.crossing_distance*0.50, name="Resume ego vehicle condition - " + str(i)) )
+
+            # resume_ego_vehicle.add_child(WaitUntilClear(
+            #     actor=self.ego_vehicles[0], 
+            #     other_actor=actor, 
+            #     clearance=self._safety_distance*1.5,
+            #     name="Resume ego vehicle condition - " + str(i)))
+
+            resume_ego_vehicle.add_child(InTriggerDistanceToLocation(
+                actor, 
+                actor.destination_transform.location, 
+                actor.destination_radius,
+                # self._pedestrian_reached_distanced,
+                name="Resume ego vehicle speed condition - " + str(i)))
+
+
+
+
+        # (self, actor, target_speed, init_speed=False,
+        #                  duration=None, distance=None, relative_actor=None,
+        #                  value=None, value_type=None, continuous=False, name="ChangeActorTargetSpeed"):
+
+        # pedestrians_crossing_street.add_child(StandStill(self.ego_vehicles[0], name="wait speed", duration=10))
+
+
+        # import pdb; pdb.set_trace()
+        # ego_stop_sequence = py_trees.composites.Sequence()
+
+        ego_speed_limit = self.ego_vehicles[0].get_speed_limit()
+        yield_params = {}
+        yield_params["max_speed"] = ego_speed_limit*0.75
+        ego_yield = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=yield_params, name="Ego vehicle yields to pedestrians")
+
+        stop_params = {}
+        stop_params["max_speed"] = 0
+        ego_stop = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=stop_params, name="Ego vehicle stops for pedestrians")
+
+        # ego_stop_condition = py_trees.composites.Parallel("Stop ego vehicle conditions", policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        # ego_stop_condition.add_child(stop_ego_vehicle)
+
+
+        resume_params = {}
+        resume_params["max_speed"] = ego_speed_limit
+        # resume_params["reset_max_speed"] = True
+        ego_resume = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=resume_params, name="Resume ego vehicle speed")
+        
+        # ego_sequence = py_trees.composites.Sequence()
+        # # ego_sequence.add_child(ego_yield)
+        # # ego_sequence.add_child(DriveDistance(self.other_actors[0], self._crossing_distance*0.25, name="Pedestrian halfway"))
+        # ego_sequence.add_child(ego_stop_condition)
+        # ego_sequence.add_child(ego_stop)
+        # # ego_sequence.add_child(DriveDistance(self.other_actors[0], self._crossing_distance*0.5, name="Pedestrian crossed"))
+        # ego_sequence.add_child(resume_ego_vehicle)
+        # ego_sequence.add_child(ego_resume)
+
+        ego_stop_behavior = py_trees.composites.Sequence()
+        ego_stop_behavior.add_child(stop_ego_vehicle)
+        ego_stop_behavior.add_child(ego_stop)
+        # ego_stop_condition = py_trees.composites.Parallel("Stop ego vehicle conditions", policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        # ego_stop_condition.add_child(stop_ego_vehicle)
+
+        # ego_sequence = py_trees.composites.Sequence()
+        # ego_sequence.add_child(ego_yield)
+
+        ego_resume_behavior = py_trees.composites.Sequence()
+        ego_resume_behavior.add_child(resume_ego_vehicle)
+        ego_resume_behavior.add_child(ego_resume)
+
+        parallel_root = py_trees.composites.Parallel("Pedestrians Crossing Events",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+        # events.add_child(ego_sequence)
+        parallel_root.add_child(ego_stop_behavior)
+        parallel_root.add_child(ego_resume_behavior)
+        parallel_root.add_child(pedestrians_crossing_street)
+
+        sequence = py_trees.composites.Sequence()
+        sequence.add_child(ego_yield)
+        sequence.add_child(parallel_root)
+        sequence.add_child(DriveDistance(self.ego_vehicles[0], self._ego_end_distance, name="EndCondition"))
+        sequence.add_child(StandStill(self.ego_vehicles[0], name="wait speed", duration=1))
+        for i, actor in enumerate(self.other_actors):
+            sequence.add_child(ActorDestroy(actor, name="DestroyActor" + str(i)))
+
+        return sequence
+
+    def _create_test_criteria(self):
+        """
+        A list of all test criteria will be created that is later used
+        in parallel behavior tree.
+        """
+        criteria = []
+
+        collision_criterion = CollisionTest(self.ego_vehicles[0])
+        criteria.append(collision_criterion)
+
+        return criteria
+
+    def __del__(self):
+        """
+        Remove all actors upon deletion
+        """
+        self.remove_all_actors()   
+
+
+class OtherVehicleYieldingToPedestrians(CrowdCrossing):
+
+    def _create_behavior(self):
+
+        # all behaviors 
+        sequence = py_trees.composites.Sequence()
+        parallel_root = py_trees.composites.Parallel("Pedestrians Crossing Events",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+
+        if len(self._vehicles) > 0:
+            other_vehicle = self._vehicles[0]
+
+            # PEDESTRIANS BEHAVIOR
+            resume_ego_vehicle_conditions = py_trees.composites.Parallel("Resume ego vehicle speed conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+            resume_other_vehicle_conditions = py_trees.composites.Parallel("Resume other vehicle speed conditions",policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
+
+            for i, actor in enumerate(self.other_actors):
+                if actor.rolename != 'pedestrian':
+                    continue
+
+                collision_wp = self._wmap.get_waypoint(actor.transform.location)
+                collision_location = collision_wp.transform.location
+
+                crossing_distance = actor.transform.location.distance( actor.destination_transform.location )
+
+                # Move the pedestrian
+                crossing_duration = crossing_distance / actor.speed
+                speed_duration = crossing_duration
+                speed_distance = crossing_distance
+
+                pedestrian_behavior = py_trees.composites.Sequence()
+                pedestrian_crossing_condition = InTriggerDistanceToLocation(
+                    other_vehicle,
+                    other_vehicle.destination_transform.location,
+                    other_vehicle.destination_radius*1.5,
+                    name="Pedestrian crossing condition - " + str(i))
+                pedestrian_behavior.add_child( pedestrian_crossing_condition )
+                pedestrian_crossing = KeepVelocity(
+                    actor, 
+                    actor.speed,
+                    # self._pedestrian_speed,
+                    duration=speed_duration, 
+                    distance=speed_distance, 
+                    name="Pedestrian" + str(i) + "Crossing")
+                pedestrian_behavior.add_child( pedestrian_crossing )
+                parallel_root.add_child(pedestrian_behavior)
+
+                resume_ego_vehicle_conditions.add_child(InTriggerDistanceToLocation(
+                    actor, 
+                    actor.destination_transform.location, 
+                    actor.destination_radius,
+                    name="Resume ego vehicle speed condition - " + str(i)))
+
+                resume_other_vehicle_conditions.add_child(InTriggerDistanceToLocation(
+                    actor, 
+                    actor.destination_transform.location, 
+                    actor.destination_radius*2,
+                    name="Resume other vehicle speed condition - " + str(i)))
+
+
+            # OTHER VEHICLE BEHAVIOR
+            # Leading vehicle behavior - drive until next intersection
+            other_vehicle_behavior = py_trees.composites.Sequence("Other Vehicle Behavior")
+            driving_to_next_intersection = py_trees.composites.Parallel("Driving towards Intersection", policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+            driving_to_next_intersection.add_child(WaypointFollower(other_vehicle, other_vehicle.speed))
+            driving_to_next_intersection.add_child(InTriggerDistanceToLocation(
+                other_vehicle,
+                other_vehicle.destination_transform.location,
+                other_vehicle.destination_radius,
+                name="Other vehicle yield condition"))
+            other_vehicle_behavior.add_child(driving_to_next_intersection)
+            other_vehicle_behavior.add_child(StopVehicle(other_vehicle, 1))
+            other_vehicle_behavior.add_child(resume_other_vehicle_conditions)
+            other_vehicle_behavior.add_child(WaypointFollower(other_vehicle, other_vehicle.speed))
+            parallel_root.add_child(other_vehicle_behavior)
+
+            # EGO VEHICLE BEHAVIOR
+            ego_speed_limit = self.ego_vehicles[0].get_speed_limit()
+            yield_params = {}
+            yield_params["max_speed"] = ego_speed_limit*0.5
+            ego_yield_behavior = py_trees.composites.Sequence()
+            ego_yield = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=yield_params, name="Ego vehicle yields to pedestrians")
+            ego_yield_condition = InTriggerDistanceToLocation(
+                other_vehicle,
+                other_vehicle.destination_transform.location,
+                other_vehicle.destination_radius*1.5,
+                name="Ego vehicle yield condition")
+            ego_yield_behavior.add_child(ego_yield_condition)
+            ego_yield_behavior.add_child(ego_yield)
+            parallel_root.add_child(ego_yield_behavior)
+
+            stop_params = {}
+            stop_params["max_speed"] = 0
+            ego_stop_behavior = py_trees.composites.Sequence()
+            ego_stop = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=stop_params, name="Ego vehicle yields to pedestrians")
+            ego_stop_condition = InTriggerDistanceToLocation(
+                other_vehicle,
+                other_vehicle.destination_transform.location,
+                other_vehicle.destination_radius,
+                name="Ego vehicle stop condition")
+            ego_stop_behavior.add_child(ego_stop_condition)
+            ego_stop_condition2 = InTriggerDistanceToLocation(
+                self.ego_vehicles[0],
+                other_vehicle.destination_transform.location,
+                self._trigger_distance*2,
+                name="Ego vehicle stop condition")
+            ego_stop_behavior.add_child(ego_stop_condition2)
+            ego_stop_behavior.add_child(ego_stop)
+            parallel_root.add_child(ego_stop_behavior)
+
+
+            resume_params = {}
+            resume_params["max_speed"] = ego_speed_limit
+            ego_resume = ChangeAutoPilot(actor=self.ego_vehicles[0], activate=True, parameters=resume_params, name="Resume ego vehicle speed")
+            ego_resume_behavior = py_trees.composites.Sequence()
+            ego_resume_behavior.add_child(resume_ego_vehicle_conditions)
+            ego_resume_behavior.add_child(ego_resume)
+            parallel_root.add_child(ego_resume_behavior)
+
+        sequence.add_child(parallel_root)
+        sequence.add_child(DriveDistance(self.ego_vehicles[0], self._ego_end_distance, name="EndCondition"))
+        sequence.add_child(StandStill(self.ego_vehicles[0], name="wait speed", duration=1))
+        for i, actor in enumerate(self.other_actors):
+            sequence.add_child(ActorDestroy(actor, name="DestroyActor" + str(i)))
+
+        return sequence
+
+    def _create_test_criteria(self):
+        """
+        A list of all test criteria will be created that is later used
+        in parallel behavior tree.
+        """
+        criteria = []
+
+        collision_criterion = CollisionTest(self.ego_vehicles[0])
+        criteria.append(collision_criterion)
+
+        return criteria
+
+    def __del__(self):
+        """
+        Remove all actors upon deletion
+        """
+        self.remove_all_actors()   
+
+
+
+class CrowdCrossinga(BasicScenario):
 
     """
     This class holds everything required for a simple object crash

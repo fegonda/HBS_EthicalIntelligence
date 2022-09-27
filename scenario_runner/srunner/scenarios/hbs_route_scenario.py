@@ -35,7 +35,7 @@ from srunner.tools.py_trees_port import oneshot_behavior
 
 
 from srunner.scenarios.route_scenario import RouteScenario
-from srunner.scenarios.route_scenario import convert_json_to_transform, compare_scenarios
+from srunner.scenarios.route_scenario import convert_json_to_transform, compare_scenarios, convert_json_to_actor
 
 from srunner.scenarios.control_loss import ControlLoss
 from srunner.scenarios.follow_leading_vehicle import FollowLeadingVehicle
@@ -45,8 +45,8 @@ from srunner.scenarios.object_crash_intersection import VehicleTurningRoute
 from srunner.scenarios.other_leading_vehicle import OtherLeadingVehicle
 from srunner.scenarios.maneuver_opposite_direction import ManeuverOppositeDirection
 from srunner.scenarios.junction_crossing_route import SignalJunctionCrossingRoute, NoSignalJunctionCrossingRoute
-from srunner.scenarios.hbs_scenarios import FollowLeadingVehiclePedestriansCrossing, CyclistCrossing, CyclistsCrossing, PedestrianCrossing, PedestrianCrossingOppositeSidewalk,  CrowdCrossing, CrowdCrossingOppositeSidewalk, FollowLeadingVehicleWithObstruction
-
+from srunner.scenarios.hbs_scenarios import FollowVehicle, PedestriansCrossingOtherVehiclesYield, FollowLeadingVehiclePedestriansCrossing, CyclistCrossing, CyclistsCrossing, PedestrianCrossing, PedestrianCrossingOppositeSidewalk,  PedestriansCrossing, CrowdCrossingOppositeSidewalk, FollowLeadingVehicleWithObstruction
+from srunner.scenarios.hbs_traffic_negotiation import TrafficNegotiation
 
 NUMBER_CLASS_TRANSLATION = {
     "Scenario1": ControlLoss,
@@ -64,12 +64,51 @@ NUMBER_CLASS_TRANSLATION = {
     "Scenario11": CyclistCrossing,
     "Scenario12": PedestrianCrossing,
     "Scenario13": PedestrianCrossingOppositeSidewalk,
-    "Scenario14": CrowdCrossing,
-    # "Scenario16": CrowdCrossingNoBlocker,
+    "Scenario14": PedestriansCrossing,
+    "Scenario15": PedestriansCrossingOtherVehiclesYield,
+    "Scenario16": FollowVehicle,
     "Scenario17": CrowdCrossingOppositeSidewalk,
+    "Scenario18": TrafficNegotiation
     # "Scenario18": PedestrianCrossingNoBlocker,
     # "Scenario19": CrowdCrossingOppositeSidewalkNoBlocker
 }
+
+
+def convert_json_to_actor_config(actor_dict, rolename):
+    """
+    Convert a JSON string to an ActorConfigurationData dictionary
+    """
+    node = ET.Element('pedestrian')
+    node.set('x', actor_dict['x'])
+    node.set('y', actor_dict['y'])
+    node.set('z', actor_dict['z'])
+    node.set('yaw', actor_dict['yaw'])
+    node.set('speed', actor_dict['speed'])
+    node.set('type', actor_dict['type'])
+    node.set('rolename', rolename)
+
+    
+    invisible_to_ego = actor_dict['invisible_to_ego'] if 'invisible_to_ego' in actor_dict else 0
+    node.set('invisible_to_ego', invisible_to_ego)  
+    awareness_distance = actor_dict['awareness_distance'] if 'awareness_distance' in actor_dict else 30
+    node.set('awareness_distance', actor_dict['awareness_distance'])
+    trigger_distance = actor_dict['trigger_distance'] if 'trigger_distance' in actor_dict else 0
+    node.set('trigger_distance', trigger_distance)  
+
+    if 'path_is_terminal' in actor_dict:
+        node.set('path_is_terminal', actor_dict['path_is_terminal'])
+
+    if 'destination' in actor_dict:
+        node.set('destination', actor_dict['destination'])
+
+    if 'sync_point' in actor_dict:
+        node.set('sync_point', actor_dict['sync_point'])
+
+    if 'path' in actor_dict:
+        node.set('path', actor_dict['path'])
+
+
+    return ActorConfigurationData.parse_from_node(node, rolename)
 
 
 class HBSRouteScenario(RouteScenario):
@@ -79,12 +118,12 @@ class HBSRouteScenario(RouteScenario):
     along which several smaller scenarios are triggered
     """
 
-    def __init__(self, world, config, debug_mode=False, criteria_enable=True, timeout=300, enable_background_activty=False, scenario_names=[], entities_files=None):
+    def __init__(self, world, config, debug_mode=False, criteria_enable=True, timeout=300, enable_background_activty=False, event_names=[], entities_files=None):
         """
         Setup all relevant parameters and create scenarios along route
         """
         self._enable_background_activty = enable_background_activty
-        self._scenario_names = scenario_names
+        self._event_names = event_names
         self._entities_files = entities_files
 
         super(HBSRouteScenario, self).__init__(
@@ -256,11 +295,11 @@ class HBSRouteScenario(RouteScenario):
 
             return False
 
-        def filter_scenarios(scenarios, filter_names):
+        def filter_scenarios(scenarios, event_names):
             results = []
-            if len(filter_names) > 0:
+            if len(event_names) > 0:
                 for scenario in scenarios:
-                    if scenario['name'] in filter_names:
+                    if scenario['event_id'] in event_names:
                         results.append( scenario )
             else:
                 results = scenarios
@@ -268,9 +307,8 @@ class HBSRouteScenario(RouteScenario):
 
         # The idea is to randomly sample a scenario per trigger position.
         sampled_scenarios = []
-        # import pdb; pdb.set_trace()
         for trigger in potential_scenarios_definitions.keys():
-            possible_scenarios = filter_scenarios( potential_scenarios_definitions[trigger], self._scenario_names )
+            possible_scenarios = filter_scenarios( potential_scenarios_definitions[trigger], self._event_names )
 
             if len( possible_scenarios ) == 0: continue
 
@@ -292,3 +330,26 @@ class HBSRouteScenario(RouteScenario):
                 sampled_scenarios.append(scenario_choice)
 
         return sampled_scenarios        
+
+
+    def _get_actors_instances(self, list_of_antagonist_actors):
+        """
+        Get the full list of actor instances.
+        """
+
+        list_of_actors = RouteScenario._get_actors_instances(self, list_of_antagonist_actors)
+
+        # import pdb; pdb.set_trace()
+        if 'pedestrians' in list_of_antagonist_actors:
+            for actor_def in list_of_antagonist_actors['pedestrians']:
+                list_of_actors.append(convert_json_to_actor_config(actor_def, 'pedestrian'))
+
+        if 'vehicles' in list_of_antagonist_actors:
+            for actor_def in list_of_antagonist_actors['vehicles']:
+                list_of_actors.append(convert_json_to_actor_config(actor_def, 'vehicle'))
+
+        if 'cyclists' in list_of_antagonist_actors:
+            for actor_def in list_of_antagonist_actors['cyclists']:
+                list_of_actors.append(convert_json_to_actor_config(actor_def, 'cyclist'))
+
+        return list_of_actors        

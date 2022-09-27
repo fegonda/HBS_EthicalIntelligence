@@ -71,7 +71,8 @@ class HBSScenarioRunner(ScenarioRunner):
                                         config=config,
                                         entities_files=self._args.entities,
                                         enable_background_activty=(not self._args.noBackgroundActivity),
-                                        scenario_names=self._args.scenarioNames,
+                                        # scenario_names=self._args.scenarioNames,
+                                        event_names=self._args.eventNames,
                                         debug_mode=self._args.debug)
         except Exception as exception:                  # pylint: disable=broad-except
             print("The scenario cannot be loaded")
